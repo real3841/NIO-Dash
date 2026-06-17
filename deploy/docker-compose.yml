@@ -1,0 +1,37 @@
+services:
+  fetcher:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.fetcher
+    container_name: nio-fetcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NIO_DATA_DIR: /data
+      NIO_POLL_INTERVAL: ${NIO_POLL_INTERVAL:-3600}
+      NIO_ENV_FILE: /app/deploy/.env
+    volumes:
+      - ./data:/data
+      - ./.env:/app/deploy/.env
+    networks:
+      - nio-net
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: nio-dashboard
+    restart: unless-stopped
+    depends_on:
+      - fetcher
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    volumes:
+      - ../dist:/usr/share/nginx/html:ro
+      - ./data:/usr/share/nginx/data:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - nio-net
+
+networks:
+  nio-net:
+    driver: bridge

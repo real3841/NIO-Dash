@@ -1,0 +1,14 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY scripts ./scripts
+
+ENV NIO_DATA_DIR=/data
+ENV NIO_POLL_INTERVAL=3600
+
+CMD ["npm", "run", "fetch:serve"]

@@ -1,0 +1,72 @@
+{
+  "name": "nio-mac",
+  "private": true,
+  "version": "1.0.0",
+  "description": "蔚来车辆看板",
+  "author": "NIO Dashboard",
+  "main": "electron-dist/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "fetch": "npm run fetch:vehicle && npm run fetch:change",
+    "fetch:vehicle": "tsx scripts/fetch-vehicle.ts && tsx scripts/sync-public-data.ts",
+    "fetch:change": "tsx scripts/fetch-change.ts && tsx scripts/sync-public-data.ts",
+    "fetch:watch": "tsx scripts/fetch-all.ts --watch",
+    "fetch:serve": "tsx scripts/fetch-all.ts --watch --serve",
+    "serve:api": "tsx scripts/fetch-all.ts --serve",
+    "postman:env": "tsx scripts/postman-to-env.ts",
+    "postfetch": "tsx scripts/sync-public-data.ts",
+    "nas:setup": "sh deploy/setup.sh",
+    "qnap:setup": "sh deploy/qnap-setup.sh",
+    "electron:bundle": "node scripts/build-electron.mjs",
+    "electron:dev": "npm run build && npm run electron:bundle && electron .",
+    "electron:pack": "npm run build && npm run electron:bundle && electron-builder --mac dir zip",
+    "electron:pack:dmg": "npm run build && npm run electron:bundle && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-leaflet": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.17",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "dotenv": "^16.5.0",
+    "electron": "^35.1.5",
+    "electron-builder": "~24.13.3",
+    "esbuild": "^0.25.4",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.nio.vehicle-dashboard",
+    "productName": "蔚来车辆看板",
+    "files": [
+      "dist/**/*",
+      "electron-dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "deploy/.env.example",
+        "to": "config.env.example"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        "dir",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    }
+  }
+}
