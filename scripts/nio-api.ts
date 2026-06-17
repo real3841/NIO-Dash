@@ -3,8 +3,8 @@
  *
  * 方式 1 — 推荐：拆参数 + Authorization（timestamp 每次自动刷新）
  *   NIO_API_MODE=widget
- *   NIO_VEHICLE_ID=cc9d1b377eaa4f611620092960004010
- *   NIO_DEVICE_ID=9e78a54fc7d74cd9ae97bac39fb10dca
+ *   NIO_VEHICLE_ID=your_vehicle_id
+ *   NIO_DEVICE_ID=your_device_id
  *   NIO_ACCESS_TOKEN=你的Bearer Token
  *   NIO_SIGN_SECRET=签名密钥（若不知道，见下方说明）
  *

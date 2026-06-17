@@ -22,6 +22,8 @@
     "qnap:setup": "sh deploy/qnap-setup.sh",
     "electron:bundle": "node scripts/build-electron.mjs",
     "electron:dev": "npm run build && npm run electron:bundle && electron .",
+    "preelectron:pack": "rm -rf dist/data public/data",
+    "preelectron:pack:dmg": "rm -rf dist/data public/data",
     "electron:pack": "npm run build && npm run electron:bundle && electron-builder --mac dir zip",
     "electron:pack:dmg": "npm run build && npm run electron:bundle && electron-builder --mac dmg"
   },
