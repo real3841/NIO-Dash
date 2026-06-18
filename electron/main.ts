@@ -4,8 +4,6 @@ import path from "node:path";
 import { startAppServer } from "../scripts/app-server.js";
 import { createTrayController, type TrayController } from "./tray.js";
 
-const isDev = !app.isPackaged;
-
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: Awaited<ReturnType<typeof startAppServer>> | null = null;
 let trayController: TrayController | null = null;
@@ -56,11 +54,12 @@ function ensureConfigFile(envFile: string): boolean {
     envFile,
     [
       "# 蔚来看板 Mac 版配置",
-      "NIO_VEHICLE_API_MODE=widget",
+      "NIO_VEHICLE_API_URL=",
       "NIO_VEHICLE_POLL_DRIVING_SEC=900",
       "NIO_VEHICLE_POLL_DAY_SEC=1800",
       "NIO_VEHICLE_POLL_NIGHT_SEC=3600",
       "NIO_CHANGE_POLL_INTERVAL=3600",
+      "NIO_TRAY_DISPLAY=soc,range",
       "NIO_VEHICLE_ACCESS_TOKEN=",
       "NIO_CHANGE_ACCESS_TOKEN=",
       "",
@@ -68,6 +67,30 @@ function ensureConfigFile(envFile: string): boolean {
     "utf8",
   );
   return true;
+}
+
+function seedDataIfEmpty(dataDir: string): void {
+  const vehicleDst = path.join(dataDir, "vehicle.json");
+  if (fs.existsSync(vehicleDst)) return;
+
+  const candidates = [
+    path.join(app.getAppPath(), "data"),
+    path.join(process.cwd(), "data"),
+  ];
+
+  for (const srcDir of candidates) {
+    const vehicleSrc = path.join(srcDir, "vehicle.json");
+    if (!fs.existsSync(vehicleSrc)) continue;
+    fs.mkdirSync(dataDir, { recursive: true });
+    for (const name of ["vehicle.json", "change.json", "history.json"]) {
+      const src = path.join(srcDir, name);
+      const dst = path.join(dataDir, name);
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst);
+      }
+    }
+    return;
+  }
 }
 
 function resolveStaticDir(): string {
@@ -131,15 +154,26 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
     },
   });
 
-  const url = `http://127.0.0.1:${port}/${firstRun ? "?setup=1" : ""}`;
-  await mainWindow.loadURL(url);
+  const url = new URL(`http://127.0.0.1:${port}/`);
+  if (firstRun) url.searchParams.set("setup", "1");
+  await mainWindow.loadURL(url.toString());
+
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, code, desc, failedUrl) => {
+    console.error(`[did-fail-load] ${code} ${desc} ${failedUrl}`);
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[render-process-gone]", details);
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     void shell.openExternal(target);
     return { action: "deny" };
   });
 
-  if (isDev) {
+  if (!app.isPackaged) {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
 
@@ -166,12 +200,15 @@ async function boot(): Promise<void> {
 
   const firstRun = ensureConfigFile(envFile);
   sanitizeConfigPlaceholders(envFile);
+  fs.mkdirSync(dataDir, { recursive: true });
+  seedDataIfEmpty(dataDir);
   const staticDir = resolveStaticDir();
 
   setupTray();
 
   serverHandle = await startAppServer({
     host: "127.0.0.1",
+    port: 17658,
     staticDir,
     dataDir,
     envFile,
@@ -181,7 +218,8 @@ async function boot(): Promise<void> {
   });
 
   serverPort = serverHandle.port;
-  serverHandle.reschedule();
+  serverHandle.rescheduleVehicle(true);
+  serverHandle.armChangeSchedule();
 
   console.log(`蔚来看板 · http://127.0.0.1:${serverHandle.port}`);
   console.log(`配置: ${envFile}`);

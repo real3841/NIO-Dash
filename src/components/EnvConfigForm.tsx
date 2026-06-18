@@ -19,7 +19,13 @@ export function EnvConfigForm({ fields, values, onChange, disabled }: Props) {
           {field.hint && <span className="env-field-hint">{field.hint}</span>}
           {field.type === "textarea" ? (
             <textarea
-              rows={field.key.includes("MOBILEINFO") ? 4 : 2}
+              rows={
+                field.key === "NIO_VEHICLE_API_URL" || field.key === "NIO_CHANGE_API_URL"
+                  ? 6
+                  : field.key.includes("MOBILEINFO")
+                    ? 4
+                    : 2
+              }
               value={values[field.key] ?? ""}
               disabled={disabled}
               onChange={(e) => onChange(field.key, e.target.value)}

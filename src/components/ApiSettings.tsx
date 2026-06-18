@@ -1,17 +1,23 @@
 import { useEffect, useState } from "react";
 import type { FetchMeta } from "../lib/storage";
+import type { CheckinData } from "../lib/checkin";
 import {
-  CHANGE_FIELDS,
+  CHECKIN_API_FIELDS,
+  CHANGE_API_FIELDS,
+  CHANGE_POLL_FIELDS,
   fetchEnvConfig,
   saveChangeEnv,
   saveVehicleEnv,
-  VEHICLE_FIELDS,
+  VEHICLE_API_FIELDS,
+  VEHICLE_POLL_FIELDS,
   type ChangeEnv,
   type EnvConfigResponse,
   type VehicleEnv,
 } from "../lib/env-config";
 import { fmtTime } from "../lib/vehicle";
 import { EnvConfigForm } from "./EnvConfigForm";
+import { TrayDisplaySettings } from "./TrayDisplaySettings";
+import { CardLayoutSettings } from "./CardLayoutSettings";
 
 export type SyncTarget = "vehicle" | "change" | "all";
 
@@ -22,6 +28,8 @@ interface ApiSettingsProps {
   lastSyncChange: number | null;
   vehicleMeta: FetchMeta | null;
   changeMeta: FetchMeta | null;
+  checkinMeta: FetchMeta | null;
+  checkinData: CheckinData | null;
   errorVehicle: string | null;
   errorChange: string | null;
   onPollConfigLoaded: (vehicleMinSec: number, changeSec: number) => void;
@@ -53,6 +61,8 @@ export function ApiSettings({
   lastSyncChange,
   vehicleMeta,
   changeMeta,
+  checkinMeta,
+  checkinData,
   errorVehicle,
   errorChange,
   onPollConfigLoaded,
@@ -60,7 +70,7 @@ export function ApiSettings({
   const [envConfig, setEnvConfig] = useState<EnvConfigResponse | null>(null);
   const [vehicleDraft, setVehicleDraft] = useState<VehicleEnv | null>(null);
   const [changeDraft, setChangeDraft] = useState<ChangeEnv | null>(null);
-  const [configOpen, setConfigOpen] = useState<"vehicle" | "change" | null>(null);
+  const [configOpen, setConfigOpen] = useState<"vehicle" | "change" | "checkin" | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingVehicle, setSavingVehicle] = useState(false);
   const [savingChange, setSavingChange] = useState(false);
@@ -176,7 +186,14 @@ export function ApiSettings({
         <p className="muted api-hint">配置文件: {envConfig.path}</p>
       )}
 
-      <div className="sync-split">
+      <TrayDisplaySettings
+        key={envConfig?.general.NIO_TRAY_DISPLAY ?? "default"}
+        initialDisplay={envConfig?.general.NIO_TRAY_DISPLAY || "soc,range"}
+      />
+
+      <CardLayoutSettings />
+
+      <div className="sync-split sync-split-3">
         <div className="sync-block">
           <div className="sync-block-head">
             <h3>车辆 API 配置</h3>
@@ -196,13 +213,28 @@ export function ApiSettings({
           {configOpen === "vehicle" && vehicleDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveVehicle}>
               <EnvConfigForm
-                fields={VEHICLE_FIELDS}
+                fields={VEHICLE_API_FIELDS}
                 values={vehicleDraft as unknown as Record<string, string>}
                 onChange={(key, value) =>
                   setVehicleDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
                 }
                 disabled={loadingConfig || savingVehicle}
               />
+              <p className="muted api-hint">
+                从 Postman 复制完整 GET URL（含 sign、timestamp），再单独填入 Authorization Token。
+                sign 过期后需重新复制 URL。
+              </p>
+              <details className="vehicle-poll-details">
+                <summary className="muted">拉取间隔（可选）</summary>
+                <EnvConfigForm
+                  fields={VEHICLE_POLL_FIELDS}
+                  values={vehicleDraft as unknown as Record<string, string>}
+                  onChange={(key, value) =>
+                    setVehicleDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
+                  }
+                  disabled={loadingConfig || savingVehicle}
+                />
+              </details>
               <p className="muted api-hint">
                 根据车辆状态与时段自动选择拉取间隔：行驶中优先，否则按白天 09:00–17:00 / 夜间区分
               </p>
@@ -238,13 +270,27 @@ export function ApiSettings({
           {configOpen === "change" && changeDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveChange}>
               <EnvConfigForm
-                fields={CHANGE_FIELDS}
+                fields={CHANGE_API_FIELDS}
                 values={changeDraft as unknown as Record<string, string>}
                 onChange={(key, value) =>
                   setChangeDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
                 }
                 disabled={loadingConfig || savingChange}
               />
+              <p className="muted api-hint">
+                从 Postman 复制完整 URL（Query Params），再单独填入 Authorization Token。接口使用 POST 请求。
+              </p>
+              <details className="vehicle-poll-details">
+                <summary className="muted">拉取间隔（可选）</summary>
+                <EnvConfigForm
+                  fields={CHANGE_POLL_FIELDS}
+                  values={changeDraft as unknown as Record<string, string>}
+                  onChange={(key, value) =>
+                    setChangeDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
+                  }
+                  disabled={loadingConfig || savingChange}
+                />
+              </details>
               <div className="row">
                 <button type="submit" className="btn secondary" disabled={savingChange}>
                   {savingChange ? "保存中…" : "保存换电配置"}
@@ -254,6 +300,52 @@ export function ApiSettings({
                 </button>
               </div>
               {saveMsgChange && <p className="save-hint">{saveMsgChange}</p>}
+            </form>
+          )}
+        </div>
+
+        <div className="sync-block">
+          <div className="sync-block-head">
+            <h3>签到 API 配置</h3>
+            <button
+              type="button"
+              className="btn ghost btn-sm"
+              onClick={() => setConfigOpen((v) => (v === "checkin" ? null : "checkin"))}
+            >
+              {configOpen === "checkin" ? "收起" : "编辑"}
+            </button>
+          </div>
+          <p className="muted sync-block-meta">{metaLine(checkinMeta)}</p>
+          <p className="muted sync-block-meta">
+            {checkinData
+              ? `今日${checkinData.checked_in ? "已" : "未"}签到 · 连续 ${checkinData.continuous_days} 天`
+              : "暂无签到数据"}
+          </p>
+          <p className="muted sync-block-meta">
+            页面读取{lastSyncVehicle ? ` · ${fmtTime(lastSyncVehicle)}` : " · —"}
+          </p>
+          {configOpen === "checkin" && vehicleDraft && (
+            <form className="api-form env-config-form" onSubmit={handleSaveVehicle}>
+              <EnvConfigForm
+                fields={CHECKIN_API_FIELDS}
+                values={vehicleDraft as unknown as Record<string, string>}
+                onChange={(key, value) =>
+                  setVehicleDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
+                }
+                disabled={loadingConfig || savingVehicle}
+              />
+                <p className="muted api-hint">
+                  GET 签到接口，每天 9:00 自动拉取一次；9 点后首次打开也会补拉，当天不再重复。Token 可留空，默认沿用车辆 Authorization。
+                </p>
+              <div className="row">
+                <button type="submit" className="btn secondary" disabled={savingVehicle}>
+                  {savingVehicle ? "保存中…" : "保存签到配置"}
+                </button>
+                <button type="button" className="btn ghost" onClick={() => void loadConfig()}>
+                  重新加载
+                </button>
+              </div>
+              {saveMsgVehicle && <p className="save-hint">{saveMsgVehicle}</p>}
             </form>
           )}
         </div>

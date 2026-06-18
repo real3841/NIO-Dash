@@ -1,58 +1,23 @@
 export type VehicleEnv = {
-  NIO_VEHICLE_API_MODE: string;
-  NIO_VEHICLE_API_METHOD: string;
-  NIO_VEHICLE_REGION: string;
-  NIO_VEHICLE_APP_ID: string;
-  NIO_VEHICLE_LANG: string;
-  NIO_VEHICLE_ID: string;
-  NIO_VEHICLE_APP_VER: string;
-  NIO_VEHICLE_DEVICE_ID: string;
-  NIO_VEHICLE_WIDGET_FUNCTIONS: string;
-  NIO_VEHICLE_WIDGET_SIZE: string;
-  NIO_VEHICLE_API_TIMESTAMP: string;
-  NIO_VEHICLE_API_SIGN: string;
+  NIO_VEHICLE_API_URL: string;
   NIO_VEHICLE_ACCESS_TOKEN: string;
-  NIO_VEHICLE_USER_AGENT: string;
   NIO_VEHICLE_POLL_DRIVING_SEC: string;
   NIO_VEHICLE_POLL_DAY_SEC: string;
   NIO_VEHICLE_POLL_NIGHT_SEC: string;
+  NIO_CHECKIN_API_URL: string;
+  NIO_CHECKIN_ACCESS_TOKEN: string;
 };
 
 export type ChangeEnv = {
-  NIO_CHANGE_API_MODE: string;
-  NIO_CHANGE_API_METHOD: string;
-  NIO_CHANGE_HASH_TYPE: string;
-  NIO_CHANGE_LANG: string;
-  NIO_CHANGE_REGION: string;
-  NIO_CHANGE_TZ_OFFSET: string;
-  NIO_CHANGE_NIO_APP_VERSION: string;
-  NIO_CHANGE_APP_VERSION: string;
-  NIO_CHANGE_ORDER_CONF_VERSION: string;
-  NIO_CHANGE_APP_VER: string;
-  NIO_CHANGE_OFFSET: string;
-  NIO_CHANGE_LIMIT: string;
-  NIO_CHANGE_ORDER_TYPES: string;
-  NIO_CHANGE_IN_PROGRESS_STATUS: string;
-  NIO_CHANGE_PAGINATION_METHOD: string;
-  NIO_CHANGE_ACCESS_TOKEN: string;
-  NIO_CHANGE_COOKIE: string;
-  NIO_CHANGE_ACCEPT: string;
-  NIO_CHANGE_ACCEPT_ENCODING: string;
-  NIO_CHANGE_ACCEPT_LANGUAGE: string;
-  NIO_CHANGE_CONTENT_TYPE: string;
-  NIO_CHANGE_CONNECTION: string;
-  NIO_CHANGE_ORIGIN: string;
-  NIO_CHANGE_PRIORITY: string;
-  NIO_CHANGE_SEC_FETCH_DEST: string;
-  NIO_CHANGE_SEC_FETCH_MODE: string;
-  NIO_CHANGE_SEC_FETCH_SITE: string;
   NIO_CHANGE_API_URL: string;
+  NIO_CHANGE_ACCESS_TOKEN: string;
   NIO_CHANGE_POLL_INTERVAL: string;
 };
 
 export type GeneralEnv = {
   NIO_POLL_INTERVAL: string;
   WEB_PORT: string;
+  NIO_TRAY_DISPLAY: string;
 };
 
 export interface EnvConfigResponse {
@@ -71,32 +36,37 @@ export interface EnvFieldDef {
   hint?: string;
 }
 
-/** orderTypes 各取值说明（与 Postman Params 一致） */
-export const CHANGE_ORDER_TYPES_HINT = `逗号分隔，不写空格。拉取以下类型的服务订单：
-pe_shaman — 充电
-pe_shaman_change — 换电
-service_pe_discharge — 放电
-battery_flexible_upgrade — 灵活升级
-nsom_so_maintenance — 一键维保
-nsom_so_chauffeur — 驾享服务
-chauffeur_vehicle_delivery — 一键送车
-so_case_accident — 事故报案`;
+export const CHANGE_API_FIELDS: EnvFieldDef[] = [
+  {
+    key: "NIO_CHANGE_API_URL",
+    label: "完整请求 URL（从 Postman 复制 Query Params）",
+    type: "textarea",
+    hint: "POST https://gateway-front-external.nio.com/moat/1100367/api/v1/otd/car/ext/general/serviceOrder/getTabOrder?offset=0&limit=2000&orderTypes=...",
+  },
+  { key: "NIO_CHANGE_ACCESS_TOKEN", label: "Authorization Token", type: "password" },
+];
 
-export const VEHICLE_FIELDS: EnvFieldDef[] = [
-  { key: "NIO_VEHICLE_API_MODE", label: "API 模式" },
-  { key: "NIO_VEHICLE_API_METHOD", label: "请求方法" },
-  { key: "NIO_VEHICLE_REGION", label: "region" },
-  { key: "NIO_VEHICLE_APP_ID", label: "app_id" },
-  { key: "NIO_VEHICLE_LANG", label: "lang" },
-  { key: "NIO_VEHICLE_ID", label: "vehicle_id" },
-  { key: "NIO_VEHICLE_APP_VER", label: "app_ver" },
-  { key: "NIO_VEHICLE_DEVICE_ID", label: "device_id" },
-  { key: "NIO_VEHICLE_WIDGET_FUNCTIONS", label: "widget_functions", type: "textarea" },
-  { key: "NIO_VEHICLE_WIDGET_SIZE", label: "widget_size" },
-  { key: "NIO_VEHICLE_API_TIMESTAMP", label: "timestamp" },
-  { key: "NIO_VEHICLE_API_SIGN", label: "sign" },
+export const CHANGE_POLL_FIELDS: EnvFieldDef[] = [
+  {
+    key: "NIO_CHANGE_POLL_INTERVAL",
+    label: "后台定时拉取间隔（秒，默认 3600 = 60 分钟）",
+  },
+];
+
+/** @deprecated use CHANGE_API_FIELDS + CHANGE_POLL_FIELDS */
+export const CHANGE_FIELDS: EnvFieldDef[] = [...CHANGE_API_FIELDS, ...CHANGE_POLL_FIELDS];
+
+export const VEHICLE_API_FIELDS: EnvFieldDef[] = [
+  {
+    key: "NIO_VEHICLE_API_URL",
+    label: "完整请求 URL（从 Postman 复制，含 sign / timestamp）",
+    type: "textarea",
+    hint: "GET https://icar.nio.com/api/2/rvs/vehicle/.../status?field=...&sign=...",
+  },
   { key: "NIO_VEHICLE_ACCESS_TOKEN", label: "Authorization Token", type: "password" },
-  { key: "NIO_VEHICLE_USER_AGENT", label: "User-Agent", type: "textarea" },
+];
+
+export const VEHICLE_POLL_FIELDS: EnvFieldDef[] = [
   {
     key: "NIO_VEHICLE_POLL_DRIVING_SEC",
     label: "行驶中拉取间隔（秒，默认 900 = 15 分钟）",
@@ -111,45 +81,22 @@ export const VEHICLE_FIELDS: EnvFieldDef[] = [
   },
 ];
 
-export const CHANGE_FIELDS: EnvFieldDef[] = [
-  { key: "NIO_CHANGE_API_MODE", label: "API 模式" },
-  { key: "NIO_CHANGE_API_METHOD", label: "请求方法 (POST)" },
-  { key: "NIO_CHANGE_HASH_TYPE", label: "hash_type" },
-  { key: "NIO_CHANGE_LANG", label: "lang" },
-  { key: "NIO_CHANGE_REGION", label: "region" },
-  { key: "NIO_CHANGE_TZ_OFFSET", label: "tz_offset" },
-  { key: "NIO_CHANGE_NIO_APP_VERSION", label: "nioAppVersion" },
-  { key: "NIO_CHANGE_APP_VERSION", label: "appVersion" },
-  { key: "NIO_CHANGE_ORDER_CONF_VERSION", label: "orderConfVersion" },
-  { key: "NIO_CHANGE_APP_VER", label: "app_ver" },
-  { key: "NIO_CHANGE_OFFSET", label: "offset" },
-  { key: "NIO_CHANGE_LIMIT", label: "limit" },
+export const CHECKIN_API_FIELDS: EnvFieldDef[] = [
   {
-    key: "NIO_CHANGE_ORDER_TYPES",
-    label: "orderTypes（订单类型）",
+    key: "NIO_CHECKIN_API_URL",
+    label: "签到 API URL（GET）",
     type: "textarea",
-    hint: CHANGE_ORDER_TYPES_HINT,
+    hint: "GET https://gateway-front-external.nio.com/moat/10086//n/c/award/square?event=checkin&collection_id=...",
   },
-  { key: "NIO_CHANGE_IN_PROGRESS_STATUS", label: "inProgressStatus" },
-  { key: "NIO_CHANGE_PAGINATION_METHOD", label: "pagination_method" },
-  { key: "NIO_CHANGE_ACCESS_TOKEN", label: "Authorization Token", type: "password" },
-  { key: "NIO_CHANGE_COOKIE", label: "Cookie", type: "textarea" },
-  { key: "NIO_CHANGE_ACCEPT", label: "Accept" },
-  { key: "NIO_CHANGE_ACCEPT_ENCODING", label: "Accept-Encoding" },
-  { key: "NIO_CHANGE_ACCEPT_LANGUAGE", label: "Accept-Language" },
-  { key: "NIO_CHANGE_CONTENT_TYPE", label: "Content-Type" },
-  { key: "NIO_CHANGE_CONNECTION", label: "Connection" },
-  { key: "NIO_CHANGE_ORIGIN", label: "Origin" },
-  { key: "NIO_CHANGE_PRIORITY", label: "Priority" },
-  { key: "NIO_CHANGE_SEC_FETCH_DEST", label: "Sec-Fetch-Dest" },
-  { key: "NIO_CHANGE_SEC_FETCH_MODE", label: "Sec-Fetch-Mode" },
-  { key: "NIO_CHANGE_SEC_FETCH_SITE", label: "Sec-Fetch-Site" },
-  { key: "NIO_CHANGE_API_URL", label: "完整 URL（可选，填了可不用 params）", type: "textarea" },
   {
-    key: "NIO_CHANGE_POLL_INTERVAL",
-    label: "后台定时拉取间隔（秒，默认 3600 = 60 分钟）",
+    key: "NIO_CHECKIN_ACCESS_TOKEN",
+    label: "签到 Authorization Token（可留空，沿用车辆 Token）",
+    type: "password",
   },
 ];
+
+/** @deprecated use VEHICLE_API_FIELDS + VEHICLE_POLL_FIELDS */
+export const VEHICLE_FIELDS: EnvFieldDef[] = [...VEHICLE_API_FIELDS, ...VEHICLE_POLL_FIELDS];
 
 export async function fetchEnvConfig(): Promise<EnvConfigResponse> {
   const res = await fetch("/api/config");
@@ -171,6 +118,18 @@ export async function saveVehicleEnv(
   const data = await res.json();
   if (!res.ok || !data.ok) {
     throw new Error(data.error ?? `保存车辆配置失败 (${res.status})`);
+  }
+}
+
+export async function saveTrayEnv(display: string): Promise<void> {
+  const res = await fetch("/api/config/tray", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ NIO_TRAY_DISPLAY: display }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error ?? `保存菜单栏配置失败 (${res.status})`);
   }
 }
 

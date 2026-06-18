@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  buildTrayTitle,
+  parseTrayDisplay,
+  type TrayVehicleData,
+} from "../src/lib/tray-display.js";
+import {
   getChangePollIntervalSec,
   getVehiclePollIntervalSec,
   parseEnvFromFile,
@@ -49,13 +54,19 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
 
 export function readTrayStatus(dataDir: string, envFile: string): TrayStatus {
   const env = loadEnvFromFile(envFile);
+  const displayFields = parseTrayDisplay(env.NIO_TRAY_DISPLAY);
   const vehiclePollSec = getVehiclePollIntervalSec(env, dataDir);
   const changePollSec = getChangePollIntervalSec(env);
   const vehicleState = readVehicleState(dataDir);
   const pollReason = vehiclePollReason(vehicleState);
 
   const vehicle = readJson<{
-    data?: { status?: { soc_status?: { soc?: number; remaining_range?: number } } };
+    data?: {
+      status?: {
+        soc_status?: { soc?: number; remaining_range?: number; remaining_actual_range?: number };
+        exterior_status?: { vehicle_state?: number; mileage?: number };
+      };
+    };
   }>(path.join(dataDir, "vehicle.json"));
 
   const vehicleMeta = readJson<{ ok?: boolean; at?: number; error?: string | null }>(
@@ -68,16 +79,24 @@ export function readTrayStatus(dataDir: string, envFile: string): TrayStatus {
 
   const soc = vehicle?.data?.status?.soc_status?.soc;
   const range = vehicle?.data?.status?.soc_status?.remaining_range;
+  const actualRange = vehicle?.data?.status?.soc_status?.remaining_actual_range;
+  const mileage = vehicle?.data?.status?.exterior_status?.mileage;
+  const state = vehicle?.data?.status?.exterior_status?.vehicle_state;
   const orders = change?.resultData?.data;
   const orderCount = Array.isArray(orders) ? orders.length : null;
 
-  let title = "蔚来";
-  if (typeof soc === "number") {
-    const socText = Number.isInteger(soc) ? `${soc}%` : `${soc.toFixed(1)}%`;
-    title = typeof range === "number" ? `${socText} · ${range}km` : socText;
-  }
+  const trayData: TrayVehicleData = {
+    soc,
+    range,
+    actualRange,
+    vehicleState: state,
+    mileage,
+    orderCount,
+  };
 
-  const lines = ["蔚来车辆看板"];
+  const title = buildTrayTitle(displayFields, trayData);
+
+  const lines = ["蔚来车辆看板", `菜单栏：${title}`];
   if (typeof soc === "number") {
     lines.push(`电量 ${Number.isInteger(soc) ? soc : soc.toFixed(1)}%`);
   }

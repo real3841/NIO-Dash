@@ -2,6 +2,7 @@ import http from "node:http";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleConfigRequest } from "./env-config-api.js";
+import { runCheckinIfDue, startDailyCheckinScheduler } from "./fetch-checkin.js";
 import {
   isFetchRunning,
   runBothOnce,
@@ -22,6 +23,7 @@ const servePort = Number(process.env.NIO_FETCH_PORT ?? 8787);
 const dataDir = getDataDir();
 
 let scheduler: ReturnType<typeof startDualFetchScheduler> | null = null;
+let checkinScheduler: ReturnType<typeof startDailyCheckinScheduler> | null = null;
 
 function startTriggerServer(): void {
   const server = http.createServer((req, res) => {
@@ -81,8 +83,10 @@ if (watch) {
     getChangeIntervalSec: () =>
       getChangePollIntervalSec(process.env as Record<string, string>),
   });
+  checkinScheduler = startDailyCheckinScheduler();
 } else if (!serve) {
   await withLock("all", runBothOnce);
+  await runCheckinIfDue();
 }
 
 if (serve) {

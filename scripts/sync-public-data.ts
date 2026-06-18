@@ -8,7 +8,15 @@ export function syncPublicData(): void {
   const publicData = getPublicDataDir();
   if (!fs.existsSync(srcDir)) return;
   fs.mkdirSync(publicData, { recursive: true });
-  for (const name of ["vehicle.json", "history.json", "last-fetch.json", "change.json", "last-fetch-change.json"]) {
+  for (const name of [
+    "vehicle.json",
+    "history.json",
+    "last-fetch.json",
+    "change.json",
+    "last-fetch-change.json",
+    "checkin.json",
+    "last-fetch-checkin.json",
+  ]) {
     const src = path.join(srcDir, name);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(publicData, name));

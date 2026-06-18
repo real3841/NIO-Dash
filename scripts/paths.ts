@@ -29,6 +29,14 @@ export function getChangeMetaFile(): string {
   return path.join(getDataDir(), "last-fetch-change.json");
 }
 
+export function getCheckinFile(): string {
+  return path.join(getDataDir(), "checkin.json");
+}
+
+export function getCheckinMetaFile(): string {
+  return path.join(getDataDir(), "last-fetch-checkin.json");
+}
+
 export function getPublicDataDir(): string {
   return path.join(getProjectRoot(), "public", "data");
 }

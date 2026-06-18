@@ -59,9 +59,15 @@ function PathStats({ path }: { path: DailyPath }) {
   );
 }
 
+function formatDistance(km: number): string {
+  if (km >= 0.1) return `${km.toFixed(1)} km`;
+  return `${Math.round(km * 1000)} m`;
+}
+
 export function DailyPathMap({ history, current }: DailyPathMapProps) {
   const dailyPaths = useMemo(() => buildDailyPaths(history), [history]);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const activeDay = selectedDay ?? dailyPaths[0]?.day ?? null;
   const activePath = dailyPaths.find((p) => p.day === activeDay) ?? null;
@@ -77,103 +83,109 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
     }
   }, [dailyPaths, selectedDay]);
 
-  if (dailyPaths.length === 0) {
-    return (
-      <section className="panel path-panel">
-        <div className="panel-head">
-          <h2>每日行驶路径</h2>
-          <span className="muted">暂无位置历史</span>
-        </div>
-        <p className="muted path-empty">
-          开启车辆自动拉取后，系统会记录每次采样的经纬度，并按天汇总成行驶轨迹。
-        </p>
-      </section>
-    );
-  }
+  const summaryMeta =
+    dailyPaths.length === 0
+      ? "暂无位置历史"
+      : activePath
+        ? `${dailyPaths.length} 天 · ${activePath.label} · ${formatDistance(activePath.distanceKm)}`
+        : `${dailyPaths.length} 天记录`;
 
   const mapCenter = positions[0] ?? (current ? [current.lat, current.lng] : [39.9, 116.4]);
 
   return (
-    <section className="panel path-panel">
-      <div className="panel-head">
-        <h2>每日行驶路径</h2>
-        <span className="muted">按天汇总 GPS 采样</span>
-      </div>
+    <details
+      className="trend-drawer path-drawer"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>
+        <span>每日行驶路径</span>
+        <span className="drawer-summary-meta">{summaryMeta}</span>
+      </summary>
 
-      <div className="path-day-tabs" role="tablist" aria-label="选择日期">
-        {dailyPaths.map((path) => (
-          <button
-            key={path.day}
-            type="button"
-            role="tab"
-            aria-selected={path.day === activeDay}
-            className={`path-day-tab${path.day === activeDay ? " active" : ""}`}
-            onClick={() => setSelectedDay(path.day)}
-          >
-            <span className="path-day-tab-label">{path.label}</span>
-            <span className="path-day-tab-meta">
-              {path.points.length} 点 ·{" "}
-              {path.distanceKm >= 0.1
-                ? `${path.distanceKm.toFixed(1)} km`
-                : `${Math.round(path.distanceKm * 1000)} m`}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {activePath && <PathStats path={activePath} />}
-
-      <div className="map-wrap path-map-wrap">
-        <MapContainer
-          center={mapCenter as [number, number]}
-          zoom={14}
-          scrollWheelZoom
-          className="map path-map"
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          {positions.length > 0 && <FitBounds positions={positions} />}
-          {activePath && positions.length >= 2 && (
-            <Polyline positions={positions} pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.85 }} />
-          )}
-          {activePath?.points.map((p, i) => {
-            const isStart = i === 0;
-            const isEnd = i === activePath.points.length - 1;
-            const color = isStart ? "#16a34a" : isEnd ? "#dc2626" : "#2563eb";
-            const radius = isStart || isEnd ? 7 : 4;
-            return (
-              <CircleMarker
-                key={p.ts}
-                center={[p.lat, p.lng]}
-                radius={radius}
-                pathOptions={{ color, fillColor: color, fillOpacity: 0.9, weight: 2 }}
-              >
-                <Tooltip direction="top" offset={[0, -4]}>
-                  {isStart ? "起点" : isEnd ? "终点" : "途经"} · {fmtClock(p.ts)}
-                  <br />
-                  {p.lat.toFixed(5)}°N, {p.lng.toFixed(5)}°E
-                </Tooltip>
-              </CircleMarker>
-            );
-          })}
-          {current && activeDay === dayKey(current.ts) && (
-            <CircleMarker
-              center={[current.lat, current.lng]}
-              radius={9}
-              pathOptions={{ color: "#7c3aed", fillColor: "#7c3aed", fillOpacity: 0.35, weight: 3 }}
-            >
-              <Tooltip direction="top">当前位置</Tooltip>
-            </CircleMarker>
-          )}
-        </MapContainer>
-      </div>
-
-      {activePath && activePath.points.length < 2 && (
-        <p className="muted path-hint">当天仅有 1 个位置点（车辆可能未移动或采样较少）</p>
+      {open && dailyPaths.length === 0 && (
+        <p className="muted path-empty">
+          开启车辆自动拉取后，系统会记录每次采样的经纬度，并按天汇总成行驶轨迹。
+        </p>
       )}
-    </section>
+
+      {open && dailyPaths.length > 0 && (
+        <>
+          <div className="path-day-tabs" role="tablist" aria-label="选择日期">
+            {dailyPaths.map((path) => (
+              <button
+                key={path.day}
+                type="button"
+                role="tab"
+                aria-selected={path.day === activeDay}
+                className={`path-day-tab${path.day === activeDay ? " active" : ""}`}
+                onClick={() => setSelectedDay(path.day)}
+              >
+                <span className="path-day-tab-label">{path.label}</span>
+                <span className="path-day-tab-meta">
+                  {path.points.length} 点 · {formatDistance(path.distanceKm)}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {activePath && <PathStats path={activePath} />}
+
+          <div className="map-wrap path-map-wrap">
+            <MapContainer
+              center={mapCenter as [number, number]}
+              zoom={14}
+              scrollWheelZoom
+              className="map path-map"
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+              {positions.length > 0 && <FitBounds positions={positions} />}
+              {activePath && positions.length >= 2 && (
+                <Polyline
+                  positions={positions}
+                  pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.85 }}
+                />
+              )}
+              {activePath?.points.map((p, i) => {
+                const isStart = i === 0;
+                const isEnd = i === activePath.points.length - 1;
+                const color = isStart ? "#16a34a" : isEnd ? "#dc2626" : "#2563eb";
+                const radius = isStart || isEnd ? 7 : 4;
+                return (
+                  <CircleMarker
+                    key={p.ts}
+                    center={[p.lat, p.lng]}
+                    radius={radius}
+                    pathOptions={{ color, fillColor: color, fillOpacity: 0.9, weight: 2 }}
+                  >
+                    <Tooltip direction="top" offset={[0, -4]}>
+                      {isStart ? "起点" : isEnd ? "终点" : "途经"} · {fmtClock(p.ts)}
+                      <br />
+                      {p.lat.toFixed(5)}°N, {p.lng.toFixed(5)}°E
+                    </Tooltip>
+                  </CircleMarker>
+                );
+              })}
+              {current && activeDay === dayKey(current.ts) && (
+                <CircleMarker
+                  center={[current.lat, current.lng]}
+                  radius={9}
+                  pathOptions={{ color: "#7c3aed", fillColor: "#7c3aed", fillOpacity: 0.35, weight: 3 }}
+                >
+                  <Tooltip direction="top">当前位置</Tooltip>
+                </CircleMarker>
+              )}
+            </MapContainer>
+          </div>
+
+          {activePath && activePath.points.length < 2 && (
+            <p className="muted path-hint">当天仅有 1 个位置点（车辆可能未移动或采样较少）</p>
+          )}
+        </>
+      )}
+    </details>
   );
 }
 

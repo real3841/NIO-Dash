@@ -3,6 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleConfigRequest } from "./env-config-api.js";
+import { getCardLayoutFile, handleCardLayoutRequest } from "./card-layout-api.js";
+import { startDailyCheckinScheduler } from "./fetch-checkin.js";
 import {
   isFetchRunning,
   setOnChangeFetchComplete,
@@ -36,7 +38,11 @@ function noCache(res: http.ServerResponse): void {
 function serveFile(res: http.ServerResponse, filePath: string): boolean {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
   const ext = path.extname(filePath).toLowerCase();
-  res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
+  res.writeHead(200, {
+    "Content-Type": MIME[ext] ?? "application/octet-stream",
+    "Access-Control-Allow-Origin": "*",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+  });
   fs.createReadStream(filePath).pipe(res);
   return true;
 }
@@ -56,6 +62,8 @@ export interface AppServerHandle {
   port: number;
   close: () => Promise<void>;
   reschedule: () => void;
+  rescheduleVehicle: (immediate?: boolean) => void;
+  armChangeSchedule: () => void;
 }
 
 export async function startAppServer(opts: AppServerOptions): Promise<AppServerHandle> {
@@ -78,12 +86,17 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       })
     : null;
 
+  const checkinScheduler = opts.enableScheduler
+    ? startDailyCheckinScheduler(notify)
+    : null;
+
   if (opts.enableScheduler) {
     setOnVehicleFetchComplete(notify);
     setOnChangeFetchComplete(notify);
   }
 
   const host = opts.host ?? "127.0.0.1";
+  const cardLayoutFile = getCardLayoutFile(opts.dataDir);
 
   const server = http.createServer((req, res) => {
     const method = req.method ?? "GET";
@@ -104,6 +117,12 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
           json(res, 404, { ok: false, error: "not_found" });
         }
         return;
+      }
+
+      if (pathname === "/api/card-layout") {
+        noCache(res);
+        const handled = await handleCardLayoutRequest(req, res, method, cardLayoutFile);
+        if (handled) return;
       }
 
       const apiPath =
@@ -184,8 +203,11 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
         setOnVehicleFetchComplete(null);
         setOnChangeFetchComplete(null);
         scheduler?.stop();
+        checkinScheduler?.stop();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
     reschedule: () => scheduler?.reschedule(),
+    rescheduleVehicle: (immediate = true) => scheduler?.rescheduleVehicle(immediate),
+    armChangeSchedule: () => scheduler?.armChangeSchedule(),
   };
 }

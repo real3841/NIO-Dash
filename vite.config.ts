@@ -1,8 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+/** Electron 内置静态服务不送 CORS 头，去掉 crossorigin 避免模块脚本加载失败 */
+function stripCrossOrigin() {
+  return {
+    name: "strip-crossorigin",
+    transformIndexHtml(html: string) {
+      return html.replace(/ crossorigin/g, "");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), stripCrossOrigin()],
+  build: {
+    modulePreload: false,
+  },
   server: {
     port: 5173,
     proxy: {

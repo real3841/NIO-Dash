@@ -1,25 +1,40 @@
 # NIO-Dash
 
-蔚来车辆看板 — macOS 菜单栏应用，自动拉取车辆状态与服务订单，在本地展示电量、续航、换电记录与每日行驶路径。
+蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
-## 功能
+## 功能概览
 
-- **菜单栏常驻**：右上角显示电量与续航，悬停查看最近拉取状态
-- **车辆状态看板**：电量、续航、车门、空调、位置、行驶状态等
-- **换电 / 服务订单**：充电、换电、维保等历史记录
-- **智能定时拉取**
-  - 车辆：行驶中 / 白天 09:00–17:00 / 夜间 17:01–08:59 分别配置间隔
-  - 换电：独立定时配置
-- **每日行驶路径**：按天汇总 GPS 采样，在地图上绘制轨迹
-- **历史趋势**：电量、续航、里程折线图
+| 模块 | 说明 |
+|------|------|
+| **菜单栏** | 常驻显示电量 / 续航等，可自定义字段 |
+| **车辆看板** | 26 张可拖拽、可隐藏的卡片，覆盖 RVS 主要状态块 |
+| **服务订单** | 换电、充电、维保等历史与统计 |
+| **每日签到** | 独立 API，每天 9:00 拉取一次 |
+| **行驶路径** | 按天汇总 GPS 采样并绘制地图轨迹 |
+| **历史趋势** | 电量、续航、里程折线图 |
 
-## 截图说明
+### 车辆看板卡片（26 张）
 
-安装后应用驻留菜单栏，点击图标可打开完整看板窗口。
+电池 · 充电详情 · 车门 · 车窗 · 轮胎 · 软件/GPS · 特殊模式 · 车辆信息 · 行驶/泊车 · 座椅加热 · 连接状态 · 温度/空调 · 维保 · 灯光 · 钥匙 · 特殊状态 · 行程分享 · 近车控制 · 换电订单 · 低压电瓶 · 设备 · 充电订单 · 远程操作 · 离车换电 · 储物箱 · 冰箱
+
+每张车辆卡片右上角有 `{ }` 按钮，可查看该卡片对应的 RVS 原始 JSON。
+
+### 服务订单卡片（4 张）
+
+订单概览 · 换电统计 · 常用换电站 · 全部订单（可折叠表格）
+
+### 智能拉取
+
+| 数据 | 策略 |
+|------|------|
+| **车辆** | 行驶中 / 白天 09:00–17:00 / 夜间 17:01–08:59 三档间隔，可配置 |
+| **换电** | 独立定时，默认 60 分钟 |
+| **签到** | 每天 **9:00** 一次；9 点后首次打开软件补拉，当天不重复 |
 
 ## 快速开始
 
@@ -38,97 +53,157 @@ npm install
 npm run electron:dev
 ```
 
-### 打包 Mac 应用
+首次启动打开 **数据同步**，填入车辆 / 换电 / 签到 API 配置后保存，再点「刷新车辆 / 刷新换电」。
+
+### 打包 Mac 应用（可直接运行）
 
 ```bash
 npm run electron:pack
 ```
 
-产物位于 `release/`：
+产物：
 
-- `release/mac-arm64/蔚来车辆看板.app` — 可直接运行
-- `release/蔚来车辆看板-mac-arm64.zip` — 压缩包
+| 路径 | 说明 |
+|------|------|
+| `release/mac-arm64/蔚来车辆看板.app` | 双击即可运行 |
+| `release/蔚来车辆看板-mac-arm64.zip` | 压缩包，便于分发 |
 
-生成 DMG 安装镜像：
+DMG 安装镜像：
 
 ```bash
 npm run electron:pack:dmg
 ```
+
+> 首次打开若被 Gatekeeper 拦截：系统设置 → 隐私与安全性 → 仍要打开。
 
 ### 仅 Web / API 开发（无 Electron）
 
 ```bash
 npm install
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env 填入 Token
-npm run fetch:serve   # 定时拉取 + API
-# 或
-npm run serve:api     # 仅 API，需手动触发拉取
-npm run dev           # 前端开发服务器
+# 编辑 deploy/.env
+npm run fetch:serve   # 定时拉取 + 本地 API
+npm run dev           # 另开终端：Vite 前端
 ```
 
 ## 配置
 
-首次启动 Mac 版时，会在用户目录生成配置文件：
+应用内 **数据同步** 面板可图形化编辑；也可直接改配置文件。
 
-```
-~/Library/Application Support/蔚来车辆看板/config.env
-~/Library/Application Support/蔚来车辆看板/data/
-```
+| 场景 | 配置文件 | 数据目录 |
+|------|----------|----------|
+| 开发 `electron:dev` | `~/Library/Application Support/nio-mac/config.env` | `~/Library/Application Support/nio-mac/data/` |
+| 打包 `.app` | `~/Library/Application Support/蔚来车辆看板/config.env` | `~/Library/Application Support/蔚来车辆看板/data/` |
 
-也可参考仓库内 `deploy/.env.example` 手动配置。
+参考模板：`deploy/.env.example`
 
-### 车辆 API（必填 Token）
+### 车辆 API（RVS）
+
+从 Postman 复制完整 GET URL（含 `sign`、`timestamp`），再填 Bearer Token：
 
 | 变量 | 说明 |
 |------|------|
-| `NIO_VEHICLE_ACCESS_TOKEN` | Bearer Token |
-| `NIO_VEHICLE_ID` | 车辆 ID |
-| `NIO_VEHICLE_DEVICE_ID` | 设备 ID |
-| `NIO_VEHICLE_POLL_DRIVING_SEC` | 行驶中拉取间隔（秒，默认 900） |
-| `NIO_VEHICLE_POLL_DAY_SEC` | 白天拉取间隔（秒，默认 1800） |
-| `NIO_VEHICLE_POLL_NIGHT_SEC` | 夜间拉取间隔（秒，默认 3600） |
+| `NIO_VEHICLE_API_URL` | 完整 GET URL |
+| `NIO_VEHICLE_ACCESS_TOKEN` | Authorization Token |
+| `NIO_VEHICLE_POLL_DRIVING_SEC` | 行驶中间隔（秒，默认 900） |
+| `NIO_VEHICLE_POLL_DAY_SEC` | 白天间隔（秒，默认 1800） |
+| `NIO_VEHICLE_POLL_NIGHT_SEC` | 夜间间隔（秒，默认 3600） |
+
+`sign` 过期后需从 Postman 重新复制 URL。拉取脚本会将 RVS 响应归一化为 `data.status` 结构。
 
 ### 换电 / 订单 API
 
 | 变量 | 说明 |
 |------|------|
-| `NIO_CHANGE_ACCESS_TOKEN` | Bearer Token |
-| `NIO_CHANGE_COOKIE` | Cookie（部分接口需要） |
+| `NIO_CHANGE_API_URL` | 完整 URL（POST，含 Query Params） |
+| `NIO_CHANGE_ACCESS_TOKEN` | Authorization Token |
 | `NIO_CHANGE_POLL_INTERVAL` | 拉取间隔（秒，默认 3600） |
 
-在应用内打开 **数据同步** 面板，可图形化编辑并保存上述配置。
+### 签到 API
+
+| 变量 | 说明 |
+|------|------|
+| `NIO_CHECKIN_API_URL` | GET 签到接口 URL |
+| `NIO_CHECKIN_ACCESS_TOKEN` | Token（可留空，沿用车辆 Token） |
+
+连接状态卡片显示 `checked_in`（今日是否签到）与 `continuous_days`（连续签到天数）。
+
+### 菜单栏显示
+
+| 变量 | 说明 |
+|------|------|
+| `NIO_TRAY_DISPLAY` | 逗号分隔：`soc` `range` `actual_range` `vehicle_state` `mileage` `orders` |
+
+## 看板操作
+
+| 操作 | 说明 |
+|------|------|
+| 拖拽排序 | 卡片右上角 ⠿ |
+| 隐藏卡片 | 卡片右上角眼睛图标 |
+| 查看 RVS JSON | 车辆卡片右上角 `{ }` |
+| 批量管理 | 数据同步 → 卡片管理（默认折叠） |
+| 恢复默认 | 卡片管理内「恢复默认」 |
+
+布局保存在 `card-layout.json`（与 `config.env` 同目录），并备份到浏览器 `localStorage`。
 
 ## 数据文件
 
 | 文件 | 内容 |
 |------|------|
-| `data/vehicle.json` | 最新车辆状态 |
-| `data/change.json` | 服务 / 换电订单 |
-| `data/history.json` | 位置与电量历史采样 |
-| `data/last-fetch.json` | 车辆拉取元信息 |
-| `data/last-fetch-change.json` | 换电拉取元信息 |
+| `vehicle.json` | 最新车辆状态 |
+| `change.json` | 服务 / 换电订单 |
+| `checkin.json` | 签到状态 |
+| `history.json` | 位置与电量历史（最多 2000 条） |
+| `last-fetch.json` | 车辆拉取元信息 |
+| `last-fetch-change.json` | 换电拉取元信息 |
+| `last-fetch-checkin.json` | 签到拉取元信息（含 `run_day`） |
+| `card-layout.json` | 卡片排序与隐藏状态 |
+
+### 采样说明
+
+- **车况采样时间**：界面显示的 `sample_time` 来自蔚来 API，表示车端上报时刻
+- **历史记录**：每次成功拉取车辆后，按 `soc_status.sample_time` 去重写入 `history.json`
+- **页面刷新**：看板定时重读本地 JSON；后台按行驶/白天/夜间策略调 API
 
 ## 项目结构
 
 ```
-├── electron/          # Electron 主进程、菜单栏
-├── src/               # React 前端
-├── scripts/           # 拉取服务、本地 API、打包脚本
-├── deploy/            # 部署与环境变量示例
-└── release/           # 打包输出（不提交 Git）
+├── electron/           # Electron 主进程、菜单栏、托盘
+├── src/                # React 前端
+│   ├── components/     # 看板、设置、拖拽网格
+│   ├── hooks/          # 卡片布局
+│   └── lib/            # RVS 归一化、签到、存储、配置
+├── scripts/            # 拉取服务、签到调度、本地 API、打包
+├── deploy/             # Docker / NAS 部署示例、.env 模板
+└── release/            # 打包输出（不提交 Git）
 ```
 
 ## 常用命令
 
 | 命令 | 说明 |
 |------|------|
-| `npm run dev` | Vite 前端开发 |
-| `npm run build` | 构建前端 |
 | `npm run electron:dev` | 构建并启动 Electron |
-| `npm run electron:pack` | 打包 Mac 应用 |
-| `npm run fetch:watch` | CLI 定时拉取 |
-| `npm run fetch` | 手动拉取一次车辆 + 换电 |
+| `npm run electron:pack` | 打包 `.app` + `.zip` |
+| `npm run electron:pack:dmg` | 打包 DMG |
+| `npm run build` | 仅构建前端 |
+| `npm run fetch` | 手动拉取车辆 + 换电 |
+| `npm run fetch:watch` | CLI 后台定时拉取 |
+| `npm run serve:api` | 仅 API 服务 |
+
+## 更新日志
+
+### v1.1.0
+
+- 26 张车辆状态卡片，支持拖拽、隐藏、RVS JSON 查看
+- 服务订单卡片与可折叠订单表格
+- 签到 API：每天 9:00 拉取，9 点后首开补拉
+- 卡片管理 / 菜单栏设置 / API 配置三列布局，默认折叠
+- RVS 响应自动归一化，兼容新接口字段布局
+- 移除未使用的 `VehicleMap`、`AlertPanel` 组件
+
+### v1.0.0
+
+- 初始版本：菜单栏、车辆看板、换电订单、Electron 打包
 
 ## 免责声明
 

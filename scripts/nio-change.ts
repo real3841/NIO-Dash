@@ -50,12 +50,16 @@ export function changeParamsFromEnv(): ChangeQueryParams {
 
 export function buildChangeUrl(): string {
   const explicit = process.env.NIO_CHANGE_API_URL?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
   const useParams =
     process.env.NIO_CHANGE_API_MODE === "params" ||
-    (!explicit && readChangeEnv("HASH_TYPE"));
+    readChangeEnv("HASH_TYPE");
 
-  if (!useParams && explicit) {
-    return explicit;
+  if (!useParams) {
+    throw new Error("请设置 NIO_CHANGE_API_URL（完整请求 URL）和 NIO_CHANGE_ACCESS_TOKEN");
   }
 
   const params = changeParamsFromEnv();

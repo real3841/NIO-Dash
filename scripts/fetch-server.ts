@@ -47,14 +47,15 @@ export function isFetchRunning(): { all: boolean; vehicle: boolean; change: bool
 }
 
 export interface FetchScheduler {
-  reschedule: () => void;
+  reschedule: (immediate?: boolean) => void;
   stop: () => void;
 }
 
 export interface DualFetchScheduler {
   reschedule: () => void;
-  rescheduleVehicle: () => void;
-  rescheduleChange: () => void;
+  rescheduleVehicle: (immediate?: boolean) => void;
+  rescheduleChange: (immediate?: boolean) => void;
+  armChangeSchedule: () => void;
   stop: () => void;
 }
 
@@ -107,11 +108,12 @@ function startSlotScheduler(
     }
   };
 
-  const reschedule = () => {
+  const reschedule = (immediate = true) => {
     if (timer) clearTimeout(timer);
     timer = null;
     if (stopped) return;
-    void tick();
+    if (immediate) void tick();
+    else scheduleNext();
   };
 
   const stop = () => {
@@ -149,11 +151,12 @@ export function startDualFetchScheduler(options: {
 
   return {
     reschedule: () => {
-      vehicle.reschedule();
-      change.reschedule();
+      vehicle.reschedule(true);
+      change.reschedule(true);
     },
-    rescheduleVehicle: () => vehicle.reschedule(),
-    rescheduleChange: () => change.reschedule(),
+    rescheduleVehicle: (immediate = true) => vehicle.reschedule(immediate),
+    rescheduleChange: (immediate = true) => change.reschedule(immediate),
+    armChangeSchedule: () => change.reschedule(false),
     stop: () => {
       vehicle.stop();
       change.stop();

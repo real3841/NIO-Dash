@@ -28,21 +28,25 @@ interface Snapshot {
 }
 
 function snapshotFromPayload(payload: Record<string, unknown>): Snapshot {
-  const status = (payload.data as Record<string, unknown>).status as Record<string, unknown>;
-  const soc = status.soc_status as Record<string, number>;
-  const ext = status.exterior_status as Record<string, number>;
-  const pos = status.position_status as Record<string, number>;
-  const hvac = status.hvac_status as Record<string, number>;
+  const data = payload.data as Record<string, unknown> | undefined;
+  const status = data?.status as Record<string, unknown> | undefined;
+  if (!status) {
+    throw new Error("API 响应缺少 data.status，请检查 URL 或 Token 是否有效");
+  }
+  const soc = (status.soc_status ?? {}) as Record<string, number>;
+  const ext = (status.exterior_status ?? {}) as Record<string, number>;
+  const pos = (status.position_status ?? {}) as Record<string, number>;
+  const hvac = (status.hvac_status ?? {}) as Record<string, number>;
   return {
-    ts: soc.sample_time,
-    soc: soc.soc,
-    range: soc.remaining_range,
-    actualRange: soc.remaining_actual_range,
-    mileage: ext.mileage,
-    lat: pos.latitude,
-    lng: pos.longitude,
-    insideTemp: hvac.temperature,
-    outsideTemp: hvac.outside_temperature,
+    ts: soc.sample_time ?? Date.now(),
+    soc: soc.soc ?? 0,
+    range: soc.remaining_range ?? 0,
+    actualRange: soc.remaining_actual_range ?? 0,
+    mileage: ext.mileage ?? 0,
+    lat: pos.latitude ?? 0,
+    lng: pos.longitude ?? 0,
+    insideTemp: hvac.temperature ?? 0,
+    outsideTemp: hvac.outside_temperature ?? 0,
   };
 }
 

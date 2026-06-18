@@ -1,19 +1,12 @@
 /**
- * 蔚来 App Widget 接口（Postman GET + Params + Headers）
+ * 车辆状态接口
  *
- * 方式 1 — 推荐：拆参数 + Authorization（timestamp 每次自动刷新）
- *   NIO_API_MODE=widget
- *   NIO_VEHICLE_ID=your_vehicle_id
- *   NIO_DEVICE_ID=your_device_id
- *   NIO_ACCESS_TOKEN=你的Bearer Token
- *   NIO_SIGN_SECRET=签名密钥（若不知道，见下方说明）
- *
- * 方式 2 — 临时：Postman 复制完整 URL（sign 会过期，不适合 NAS 定时）
- *   NIO_API_URL=https://app.nio.com/app/api/icar/v2/widget/info?region=cn&...
- *   NIO_API_METHOD=GET
- *   NIO_API_HEADERS={"Authorization":"Bearer xxx","User-Agent":"VehicleWidgetExtension/6.5.3 ..."}
+ * 推荐：完整 URL + Authorization Token（从 Postman 复制）
+ *   NIO_VEHICLE_API_URL=https://icar.nio.com/api/2/rvs/vehicle/.../status?...
+ *   NIO_VEHICLE_ACCESS_TOKEN=你的 Bearer Token
  */
 
+import { normalizeRvsVehiclePayload } from "./nio-rvs.js";
 import { buildWidgetUrl, normalizeVehiclePayload, widgetHeadersFromEnv } from "./nio-widget.js";
 import { fetchWithAsciiHeaders, normalizeBearerToken } from "./http-headers.js";
 
@@ -23,6 +16,9 @@ export interface FetchConfig {
   headers: Record<string, string>;
   body?: string;
 }
+
+const DEFAULT_USER_AGENT =
+  "VehicleWidgetExtension/6.5.3 (com.do1.WeiLaiApp.NIOVehicleWidget; build:2612; iOS 26.5.0) Alamofire/5.9.1";
 
 function readJsonResponse<T>(text: string, label: string): T {
   const trimmed = text.trim();
@@ -37,25 +33,12 @@ function readJsonResponse<T>(text: string, label: string): T {
   }
 }
 
-export function loadFetchConfig(): FetchConfig {
-  const mode = (process.env.NIO_VEHICLE_API_MODE ?? process.env.NIO_API_MODE ?? "").toLowerCase();
-  const explicitUrl = (process.env.NIO_VEHICLE_API_URL ?? process.env.NIO_API_URL)?.trim();
-
-  if (
-    mode === "widget" ||
-    ((process.env.NIO_VEHICLE_ID || process.env.NIO_ID) &&
-      (process.env.NIO_VEHICLE_DEVICE_ID || process.env.NIO_DEVICE_ID) &&
-      !explicitUrl)
-  ) {
-    return {
-      url: buildWidgetUrl(),
-      method: "GET",
-      headers: widgetHeadersFromEnv(),
-    };
-  }
-
+function buildUrlModeConfig(explicitUrl: string): FetchConfig {
   const headersJson = process.env.NIO_VEHICLE_API_HEADERS ?? process.env.NIO_API_HEADERS;
-  let headers: Record<string, string> = { Accept: "application/json" };
+  let headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": process.env.NIO_VEHICLE_USER_AGENT ?? process.env.NIO_USER_AGENT ?? DEFAULT_USER_AGENT,
+  };
 
   if (headersJson) {
     try {
@@ -71,25 +54,36 @@ export function loadFetchConfig(): FetchConfig {
     headers.Authorization = auth;
   }
 
-  if (explicitUrl) {
-    const method = (process.env.NIO_VEHICLE_API_METHOD ?? process.env.NIO_API_METHOD ?? "GET").toUpperCase();
-    const body = process.env.NIO_VEHICLE_API_BODY?.trim() || process.env.NIO_API_BODY?.trim() || undefined;
+  const method = (process.env.NIO_VEHICLE_API_METHOD ?? process.env.NIO_API_METHOD ?? "GET").toUpperCase();
+  const body = process.env.NIO_VEHICLE_API_BODY?.trim() || process.env.NIO_API_BODY?.trim() || undefined;
 
-    if (method !== "GET" && method !== "HEAD" && body && !headers["Content-Type"] && !headers["content-type"]) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    if (!headers["User-Agent"] && explicitUrl.includes("widget/info")) {
-      headers["User-Agent"] =
-        process.env.NIO_VEHICLE_USER_AGENT ??
-        process.env.NIO_USER_AGENT ??
-        "VehicleWidgetExtension/6.5.3 (com.nio.app; build:6050300; iOS 18.0.0)";
-    }
-
-    return { url: explicitUrl, method, headers, body };
+  if (method !== "GET" && method !== "HEAD" && body && !headers["Content-Type"] && !headers["content-type"]) {
+    headers["Content-Type"] = "application/json";
   }
 
-  throw new Error("请设置 NIO_VEHICLE_API_MODE=widget + 参数，或 NIO_VEHICLE_API_URL（Postman 完整 URL）");
+  return { url: explicitUrl, method, headers, body };
+}
+
+export function loadFetchConfig(): FetchConfig {
+  const explicitUrl = (process.env.NIO_VEHICLE_API_URL ?? process.env.NIO_API_URL)?.trim();
+  if (explicitUrl) {
+    return buildUrlModeConfig(explicitUrl);
+  }
+
+  const mode = (process.env.NIO_VEHICLE_API_MODE ?? process.env.NIO_API_MODE ?? "").toLowerCase();
+  if (
+    mode === "widget" ||
+    ((process.env.NIO_VEHICLE_ID || process.env.NIO_ID) &&
+      (process.env.NIO_VEHICLE_DEVICE_ID || process.env.NIO_DEVICE_ID))
+  ) {
+    return {
+      url: buildWidgetUrl(),
+      method: "GET",
+      headers: widgetHeadersFromEnv(),
+    };
+  }
+
+  throw new Error("请设置 NIO_VEHICLE_API_URL（完整请求 URL）和 NIO_VEHICLE_ACCESS_TOKEN");
 }
 
 export async function fetchFromApi(config: FetchConfig): Promise<Record<string, unknown>> {
@@ -106,5 +100,6 @@ export async function fetchFromApi(config: FetchConfig): Promise<Record<string, 
   }
 
   const raw = readJsonResponse<Record<string, unknown>>(text, "蔚来 API");
-  return normalizeVehiclePayload(raw);
+  const rvs = normalizeRvsVehiclePayload(raw);
+  return normalizeVehiclePayload(rvs);
 }

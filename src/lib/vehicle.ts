@@ -15,7 +15,7 @@ export interface VehicleResponse {
   result_code: string;
   server_time: number;
   data: {
-    checked_in: { checked: boolean; days: number };
+    checked_in?: { checked: boolean; days: number };
     alarm: unknown[];
     status: {
       hvac_status: {
@@ -74,6 +74,20 @@ export interface VehicleResponse {
       };
       vehicle_id: string;
       door_status: Record<string, number>;
+      tyre_status?: Record<string, number>;
+      light_status?: Record<string, number>;
+      key_status?: Record<string, number>;
+      special_status?: Record<string, unknown>;
+      trip_share_status?: Record<string, number>;
+      nearby_car_ctrl?: Record<string, boolean>;
+      power_swap_order?: Record<string, boolean>;
+      lv_batt_status?: Record<string, unknown>;
+      device_status?: Record<string, unknown>;
+      charge_status_order?: Record<string, unknown>;
+      remote_operate_status?: Record<string, unknown>;
+      offcar_power_swap_status?: Record<string, unknown>;
+      box_status?: Record<string, unknown>;
+      frdg_status?: Record<string, unknown>;
     };
   };
 }
@@ -100,6 +114,19 @@ export function snapshotFromResponse(data: VehicleResponse): VehicleSnapshot {
     insideTemp: s.hvac_status.temperature,
     outsideTemp: s.hvac_status.outside_temperature,
   };
+}
+
+export function formatVehicleId(id: string | undefined): string {
+  if (!id) return "—";
+  if (id.length <= 9) return id;
+  return `${id.slice(0, 4)}…${id.slice(-5)}`;
+}
+
+import { normalizeRvsVehiclePayload } from "./rvs-normalize";
+
+/** 兼容 RVS 接口：vehicle_id 在 data 顶层、字段平铺在 data.*_status */
+export function normalizeVehicleResponse(data: VehicleResponse): VehicleResponse {
+  return normalizeRvsVehiclePayload(data as unknown as Record<string, unknown>) as VehicleResponse;
 }
 
 export function buildSeedHistory(current: VehicleSnapshot): VehicleSnapshot[] {
@@ -242,7 +269,7 @@ export function computeAlerts(data: VehicleResponse): VehicleAlert[] {
     });
   }
 
-  if (data.data.alarm.length > 0) {
+  if ((data.data.alarm ?? []).length > 0) {
     alerts.push({
       id: "server-alarm",
       tone: "danger",
@@ -256,7 +283,7 @@ export function computeAlerts(data: VehicleResponse): VehicleAlert[] {
       id: "all-clear",
       tone: "success",
       title: "状态正常",
-      detail: `已连续用车 ${data.data.checked_in.days} 天，无异常项。`,
+      detail: "车况正常，无异常告警。",
     });
   }
 

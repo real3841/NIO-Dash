@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { StrictMode, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
-import { DailyPathMap } from "./components/DailyPathMap";
 import { DashboardCards } from "./components/DashboardCards";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SwapHistory } from "./components/SwapHistory";
 import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
 import type { ChangeResponse } from "./lib/change";
+import type { CheckinData } from "./lib/checkin";
 import {
   loadFetchMeta,
   loadChangeFetchMeta,
+  loadCheckinFetchMeta,
   fetchChangeData,
+  fetchCheckinData,
   fetchServerHistory,
   triggerServerFetch,
   triggerServerFetchChange,
@@ -20,6 +23,11 @@ import {
   type FetchMeta,
 } from "./lib/storage";
 import { fmtTime, mergeHistory, snapshotFromResponse, type VehicleResponse, type VehicleSnapshot } from "./lib/vehicle";
+import { hydrateCardLayout } from "./lib/card-layout";
+
+const DailyPathMap = lazy(() =>
+  import("./components/DailyPathMap").then((m) => ({ default: m.DailyPathMap })),
+);
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
   try {
@@ -48,11 +56,17 @@ export default function App() {
   const [changeMeta, setChangeMeta] = useState<FetchMeta | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [changeData, setChangeData] = useState<ChangeResponse | null>(null);
+  const [checkinData, setCheckinData] = useState<CheckinData | null>(null);
+  const [checkinMeta, setCheckinMeta] = useState<FetchMeta | null>(null);
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).get("setup") === "1",
   );
   const [vehiclePollSec, setVehiclePollSec] = useState(900);
   const [changePollSec, setChangePollSec] = useState(3600);
+
+  useEffect(() => {
+    void hydrateCardLayout();
+  }, []);
 
   useEffect(() => {
     void fetchEnvConfig()
@@ -82,14 +96,18 @@ export default function App() {
       }
     }
 
-    const [payload, serverHistory, meta] = await Promise.all([
+    const [payload, serverHistory, meta, checkin, checkinMetaResult] = await Promise.all([
       fetchVehicleData(),
       fetchServerHistory(),
       loadFetchMeta(),
+      fetchCheckinData(),
+      loadCheckinFetchMeta(),
     ]);
 
     setData(payload);
     setVehicleMeta(meta);
+    setCheckinData(checkin);
+    setCheckinMeta(checkinMetaResult);
     setLastSyncVehicle(Date.now());
 
     const snap = snapshotFromResponse(payload);
@@ -177,10 +195,26 @@ export default function App() {
     [refreshChange, refreshVehicle],
   );
 
+  const initialFetchDone = useRef(false);
+
   useEffect(() => {
-    void refresh("all");
+    void (async () => {
+      await refresh("vehicle", false);
+      await refresh("change", false);
+      initialFetchDone.current = true;
+      void refresh("vehicle", true);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (!initialFetchDone.current || document.visibilityState !== "visible") return;
+      void refresh("vehicle", true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -211,6 +245,24 @@ export default function App() {
           <button type="button" className="btn primary" onClick={() => void refresh("all")}>
             重试
           </button>
+        )}
+        {showSettings && (
+          <ApiSettings
+            onRefresh={(target, triggerFetch) => {
+              void refresh(target, triggerFetch);
+            }}
+            loadingTarget={loadingTarget}
+            lastSyncVehicle={lastSyncVehicle}
+            lastSyncChange={lastSyncChange}
+            vehicleMeta={vehicleMeta}
+            changeMeta={changeMeta}
+            errorVehicle={errorVehicle}
+            errorChange={errorChange}
+            onPollConfigLoaded={(vehicleMin, change) => {
+              setVehiclePollSec(vehicleMin);
+              setChangePollSec(change);
+            }}
+          />
         )}
       </div>
     );
@@ -271,6 +323,8 @@ export default function App() {
           lastSyncChange={lastSyncChange}
           vehicleMeta={vehicleMeta}
           changeMeta={changeMeta}
+          checkinMeta={checkinMeta}
+          checkinData={checkinData}
           errorVehicle={errorVehicle}
           errorChange={errorChange}
           onPollConfigLoaded={(vehicleMin, change) => {
@@ -280,16 +334,18 @@ export default function App() {
         />
       )}
 
-      <DashboardCards data={data} address={address} />
+      <DashboardCards data={data} address={address} checkin={checkinData} />
 
-      <DailyPathMap
-        history={pathHistory}
-        current={{
-          lat: s.position_status.latitude,
-          lng: s.position_status.longitude,
-          ts: s.position_status.sample_time,
-        }}
-      />
+      <Suspense fallback={<section className="panel muted">地图加载中…</section>}>
+        <DailyPathMap
+          history={pathHistory}
+          current={{
+            lat: s.position_status.latitude,
+            lng: s.position_status.longitude,
+            ts: s.position_status.sample_time,
+          }}
+        />
+      </Suspense>
 
       {changeData && <SwapHistory data={changeData} />}
 

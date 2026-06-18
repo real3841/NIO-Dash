@@ -1,5 +1,8 @@
 import type { ChangeResponse } from "./change";
+import type { CheckinData } from "./checkin";
+import { normalizeCheckinData } from "./checkin";
 import type { VehicleResponse, VehicleSnapshot } from "./vehicle";
+import { normalizeVehicleResponse } from "./vehicle";
 import fallbackChange from "../../data/change.json";
 import fallbackVehicle from "../../data/vehicle.json";
 
@@ -85,10 +88,10 @@ export async function fetchVehicleData(): Promise<VehicleResponse> {
     if (!res.ok) {
       throw new Error(`无法加载 /data/vehicle.json (${res.status})`);
     }
-    return readJsonResponse<VehicleResponse>(res, "vehicle.json");
+    return normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
   } catch (err) {
     console.warn("[dashboard] 使用内置 fallback 数据:", err);
-    return fallbackVehicle as VehicleResponse;
+    return normalizeVehicleResponse(fallbackVehicle as VehicleResponse);
   }
 }
 
@@ -117,6 +120,31 @@ export async function loadChangeFetchMeta(): Promise<FetchMeta | null> {
     const res = await fetch(`/data/last-fetch-change.json?_=${Date.now()}`);
     if (!res.ok) return null;
     return readJsonResponse<FetchMeta>(res, "last-fetch-change.json");
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchCheckinData(): Promise<CheckinData | null> {
+  try {
+    const [res, meta] = await Promise.all([
+      fetch(`/data/checkin.json?_=${Date.now()}`),
+      loadCheckinFetchMeta(),
+    ]);
+    if (!res.ok) return null;
+    if (meta && !meta.ok) return null;
+    const raw = await readJsonResponse<unknown>(res, "checkin.json");
+    return normalizeCheckinData(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function loadCheckinFetchMeta(): Promise<FetchMeta | null> {
+  try {
+    const res = await fetch(`/data/last-fetch-checkin.json?_=${Date.now()}`);
+    if (!res.ok) return null;
+    return readJsonResponse<FetchMeta>(res, "last-fetch-checkin.json");
   } catch {
     return null;
   }
