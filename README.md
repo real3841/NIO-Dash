@@ -66,7 +66,6 @@ npm run electron:pack
 | 路径 | 说明 |
 |------|------|
 | `release/mac-arm64/蔚来车辆看板.app` | 双击即可运行 |
-| `release/蔚来车辆看板-mac-arm64.zip` | 压缩包，便于分发 |
 
 DMG 安装镜像：
 
@@ -97,9 +96,44 @@ npm run dev           # 另开终端：Vite 前端
 
 参考模板：`deploy/.env.example`
 
+### 如何获取 API 配置（抓包）
+
+本看板通过**重放蔚来 App 自己的请求**来认证，不单独实现登录。因此需要先在手机上抓一次包，把 App 发出的真实 URL 和 Token 填进配置。
+
+#### 1. 架设 MITM 代理
+
+在手机与网络之间架设中间人代理，任选其一即可：
+
+mitmproxy · Reqable · Charles · Surge · Quantumult X …
+
+在手机上**安装并信任**代理工具的 CA 证书（否则 HTTPS 无法解密）。
+
+#### 2. 抓取车辆状态请求
+
+1. 打开**蔚来 App**
+2. 进入车辆页，**下拉刷新**一次
+3. 在代理记录中找到这条请求：
+
+```
+GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
+```
+
+#### 3. 复制两样东西
+
+| 填入看板 | 从哪里取 |
+|----------|----------|
+| **车辆 API URL** | 整条请求 URL：从 `https://…/status?` 一直到末尾的 `…&sign=…`，**全部复制** |
+| **Authorization Token** | 请求头 `Authorization: Bearer …` 中 `Bearer` 后面的部分（或整段 `Bearer …` 均可） |
+
+在应用内打开 **数据同步 → 车辆 API 配置 → 编辑**，分别粘贴到 `NIO_VEHICLE_API_URL` 与 `NIO_VEHICLE_ACCESS_TOKEN`，保存后点「刷新车辆」。
+
+> `sign` / `timestamp` 会过期。拉取失败时，重新在 App 里刷新车辆页，再抓一条新 URL 替换即可。
+
+换电、签到等接口同理：在 App 里触发对应操作，在代理里找到 `gateway-front-external.nio.com` 下的请求，复制完整 URL 与 `Authorization` 头。
+
 ### 车辆 API（RVS）
 
-从 Postman 复制完整 GET URL（含 `sign`、`timestamp`），再填 Bearer Token：
+将抓包得到的 URL 与 Token 填入：
 
 | 变量 | 说明 |
 |------|------|
@@ -109,7 +143,7 @@ npm run dev           # 另开终端：Vite 前端
 | `NIO_VEHICLE_POLL_DAY_SEC` | 白天间隔（秒，默认 1800） |
 | `NIO_VEHICLE_POLL_NIGHT_SEC` | 夜间间隔（秒，默认 3600） |
 
-`sign` 过期后需从 Postman 重新复制 URL。拉取脚本会将 RVS 响应归一化为 `data.status` 结构。
+`sign` 过期后需重新抓包并替换 URL。拉取脚本会将 RVS 响应归一化为 `data.status` 结构。
 
 ### 换电 / 订单 API
 
@@ -183,7 +217,7 @@ npm run dev           # 另开终端：Vite 前端
 | 命令 | 说明 |
 |------|------|
 | `npm run electron:dev` | 构建并启动 Electron |
-| `npm run electron:pack` | 打包 `.app` + `.zip` |
+| `npm run electron:pack` | 打包 `.app` |
 | `npm run electron:pack:dmg` | 打包 DMG |
 | `npm run build` | 仅构建前端 |
 | `npm run fetch` | 手动拉取车辆 + 换电 |

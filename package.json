@@ -67,10 +67,7 @@
       "output": "release"
     },
     "mac": {
-      "target": [
-        "dir",
-        "zip"
-      ],
+      "target": "dir",
       "category": "public.app-category.utilities"
     }
   }
