@@ -194,11 +194,16 @@ a {
   align-items: center;
   justify-content: center;
   padding: 20px;
+  overscroll-behavior: none;
+}
+
+.runtime-log-overlay {
+  overflow: hidden;
 }
 
 .card-rvs-dialog {
   width: min(640px, 100%);
-  max-height: min(80vh, 720px);
+  max-height: min(85vh, 840px);
   background: var(--card);
   border: 1px solid var(--stroke);
   border-radius: 16px;
@@ -206,6 +211,7 @@ a {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .card-rvs-head {
@@ -239,6 +245,242 @@ a {
   white-space: pre-wrap;
   word-break: break-word;
   flex: 1;
+}
+
+.runtime-log-dialog {
+  width: min(920px, calc(100vw - 32px));
+  height: min(92vh, 960px);
+  max-height: min(92vh, 960px);
+}
+
+.runtime-log-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  overflow: hidden;
+}
+
+.runtime-log-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.runtime-log-schedule {
+  flex-shrink: 0;
+  margin: 0 0 10px;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.runtime-log-schedule summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  user-select: none;
+}
+
+.runtime-log-schedule p {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.runtime-log-list-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.runtime-log-list-scroll {
+  flex: 1;
+  min-height: min(58vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 8px;
+}
+
+.runtime-log-list-wrap h4 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.runtime-log-count {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.runtime-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runtime-log-item {
+  font-size: 12px;
+  line-height: 1.45;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--stroke);
+  overflow: hidden;
+}
+
+.runtime-log-item-btn {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 8px;
+  align-items: start;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+}
+
+.runtime-log-item-clickable .runtime-log-item-btn {
+  cursor: pointer;
+}
+
+.runtime-log-item-clickable .runtime-log-item-btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.runtime-log-item-btn:disabled {
+  cursor: default;
+}
+
+.runtime-log-time {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.runtime-log-slot {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.runtime-log-msg {
+  word-break: break-word;
+}
+
+.runtime-log-chevron {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.runtime-log-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.runtime-log-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.runtime-log-info {
+  border-color: var(--stroke);
+}
+
+.runtime-log-detail-panel {
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.runtime-log-detail-request,
+.runtime-log-detail-summary,
+.runtime-log-detail-raw {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.runtime-log-detail-request summary,
+.runtime-log-detail-summary summary,
+.runtime-log-detail-raw summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 500;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.runtime-log-detail-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+
+.runtime-log-detail-dl {
+  margin: 8px 0 0;
+}
+
+.runtime-log-detail-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--stroke);
+}
+
+.runtime-log-detail-row:last-child {
+  border-bottom: none;
+}
+
+.runtime-log-detail-row dt {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.runtime-log-detail-row dd {
+  margin: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.runtime-log-api-request,
+.runtime-log-detail-raw pre {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  max-height: min(55vh, 720px);
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.runtime-log-item-expanded.runtime-log-success,
+.runtime-log-item-expanded.runtime-log-error {
+  grid-column: 1 / -1;
 }
 
 .card-grid-empty {

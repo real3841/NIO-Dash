@@ -18,6 +18,7 @@ import { fmtTime } from "../lib/vehicle";
 import { EnvConfigForm } from "./EnvConfigForm";
 import { TrayDisplaySettings } from "./TrayDisplaySettings";
 import { CardLayoutSettings } from "./CardLayoutSettings";
+import { SyncRuntimeLogModal } from "./SyncRuntimeLogModal";
 
 export type SyncTarget = "vehicle" | "change" | "all";
 
@@ -77,6 +78,7 @@ export function ApiSettings({
   const [saveMsgVehicle, setSaveMsgVehicle] = useState<string | null>(null);
   const [saveMsgChange, setSaveMsgChange] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [logOpen, setLogOpen] = useState(false);
 
   const loadConfig = async () => {
     setLoadingConfig(true);
@@ -155,6 +157,9 @@ export function ApiSettings({
       <div className="panel-head">
         <h2>数据同步</h2>
         <div className="row sync-actions">
+          <button type="button" className="btn ghost" onClick={() => setLogOpen(true)}>
+            运行日志
+          </button>
           <button
             type="button"
             className="btn primary"
@@ -173,6 +178,7 @@ export function ApiSettings({
           </button>
         </div>
       </div>
+      {logOpen && <SyncRuntimeLogModal onClose={() => setLogOpen(false)} />}
 
       {configError && (
         <div className="alert alert-danger">

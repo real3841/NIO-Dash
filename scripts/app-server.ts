@@ -13,7 +13,8 @@ import {
   triggerFetch,
   type FetchSlot,
 } from "./fetch-server.js";
-import { getChangePollIntervalSec, getVehiclePollIntervalSec } from "./poll-interval.js";
+import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
+import { getFetchLogSnapshot } from "./fetch-log.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -78,10 +79,16 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     getChangePollIntervalSec(process.env as Record<string, string>);
 
   const notify = () => opts.onDataUpdated?.();
+  const getVehicleScheduleDetail = () => {
+    const info = getVehiclePollInfo(process.env as Record<string, string>, opts.dataDir);
+    return `策略 ${info.reasonLabel} · 间隔 ${info.intervalSec}s`;
+  };
+
   const scheduler = opts.enableScheduler
     ? startDualFetchScheduler({
         getVehicleIntervalSec,
         getChangeIntervalSec,
+        getVehicleScheduleDetail,
         deferInitialTick: opts.deferInitialTick ?? false,
       })
     : null;
@@ -109,6 +116,12 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     void (async () => {
       if (pathname === "/health") {
         json(res, 200, { ok: true, running: isFetchRunning(), at: Date.now() });
+        return;
+      }
+
+      if (pathname === "/api/fetch-log" || pathname === "/fetch-log") {
+        noCache(res);
+        json(res, 200, getFetchLogSnapshot(isFetchRunning()));
         return;
       }
 

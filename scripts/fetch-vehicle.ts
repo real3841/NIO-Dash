@@ -11,6 +11,8 @@ import {
 } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
+import { appendFetchLog } from "./fetch-log.js";
+import { buildApiRequestDetail, vehicleErrorDetail, vehicleSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -98,7 +100,8 @@ function writeMeta(ok: boolean, error?: string): void {
 }
 
 export async function runVehicleOnce(): Promise<void> {
-  let payload: Record<string, unknown>;
+  let payload: Record<string, unknown> | undefined;
+  let apiRequest = null as ReturnType<typeof buildApiRequestDetail> | null;
   const dataFile = getVehicleFile();
 
   try {
@@ -115,6 +118,7 @@ export async function runVehicleOnce(): Promise<void> {
       process.env.NIO_ACCESS_TOKEN
     ) {
       const apiConfig = loadFetchConfig();
+      apiRequest = buildApiRequestDetail(apiConfig);
       console.log(`请求 ${apiConfig.method} ${apiConfig.url}`);
       if (apiConfig.body) {
         console.log(`Body: ${apiConfig.body.slice(0, 120)}${apiConfig.body.length > 120 ? "…" : ""}`);
@@ -122,6 +126,7 @@ export async function runVehicleOnce(): Promise<void> {
       payload = await fetchFromApi(apiConfig);
     } else if (fs.existsSync(dataFile)) {
       payload = JSON.parse(fs.readFileSync(dataFile, "utf8"));
+      apiRequest = buildApiRequestDetail({ method: "LOCAL", url: dataFile });
       console.log("未配置 API，跳过网络请求，仅刷新本地 vehicle.json");
     } else {
       throw new Error("请配置 NIO_API_URL 或放置 data/vehicle.json");
@@ -137,10 +142,18 @@ export async function runVehicleOnce(): Promise<void> {
 
     syncPublicData();
 
+    appendFetchLog(
+      "vehicle",
+      "success",
+      `采样 ${new Date(snap.ts).toLocaleString("zh-CN")} · 电量 ${snap.soc}% · 标准续航 ${snap.range}km · 实际 ${snap.actualRange}km · 里程 ${snap.mileage.toLocaleString()}km`,
+      vehicleSuccessDetail(payload, snap, apiRequest),
+    );
+
     console.log(`已写入 ${dataFile}`);
     console.log(`历史 ${getHistoryFile()} · 采样 ${new Date(snap.ts).toLocaleString("zh-CN")}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    appendFetchLog("vehicle", "error", `拉取失败：${message}`, vehicleErrorDetail(message, payload, apiRequest));
     writeMeta(false, message);
     throw err;
   }

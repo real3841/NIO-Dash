@@ -6,6 +6,8 @@ import { fetchWithAsciiHeaders } from "./http-headers.js";
 import { getChangeFile, getChangeMetaFile, getDataDir, getProjectRoot } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
+import { appendFetchLog } from "./fetch-log.js";
+import { buildApiRequestDetail, changeErrorDetail, changeSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -36,8 +38,20 @@ function normalizeJson(text: string): Record<string, unknown> {
   return JSON.parse(trimmed) as Record<string, unknown>;
 }
 
+function summarizeChangePayload(payload: Record<string, unknown>): string {
+  const resultData = payload.resultData as { data?: unknown[]; total?: number | null } | undefined;
+  const count = Array.isArray(resultData?.data) ? resultData.data.length : 0;
+  const total = resultData?.total;
+  if (typeof total === "number" && total !== count) {
+    return `订单 ${count} 条 / 共 ${total} 条`;
+  }
+  return `订单 ${count} 条`;
+}
+
 export async function runChangeOnce(): Promise<void> {
   const changeFile = getChangeFile();
+  let lastResponseText: string | undefined;
+  let apiRequest: ReturnType<typeof buildApiRequestDetail> | null = null;
 
   try {
     const hasConfig =
@@ -50,6 +64,7 @@ export async function runChangeOnce(): Promise<void> {
         throw new Error("未配置换电 API，且 data/change.json 不存在");
       }
       console.log("未配置换电 API，保留当前 change.json");
+      appendFetchLog("change", "info", "未配置换电 API，保留当前 change.json");
       writeMeta(true);
       return;
     }
@@ -61,6 +76,7 @@ export async function runChangeOnce(): Promise<void> {
       method === "GET" || method === "HEAD"
         ? undefined
         : process.env.NIO_CHANGE_API_BODY?.trim() ?? "";
+    apiRequest = buildApiRequestDetail({ url, method, body });
 
     console.log(`请求 ${method} ${url.slice(0, 120)}${url.length > 120 ? "…" : ""}`);
 
@@ -71,8 +87,15 @@ export async function runChangeOnce(): Promise<void> {
     });
 
     const text = await res.text();
+    lastResponseText = text;
     if (!res.ok) {
-      throw new Error(`换电 API ${res.status}: ${text.slice(0, 500)}`);
+      const err = new Error(`换电 API ${res.status}: ${text.slice(0, 500)}`) as Error & {
+        httpStatus?: number;
+        rawBody?: string;
+      };
+      err.httpStatus = res.status;
+      err.rawBody = text;
+      throw err;
     }
 
     const payload = normalizeJson(text);
@@ -82,9 +105,24 @@ export async function runChangeOnce(): Promise<void> {
     fs.writeFileSync(changeFile, JSON.stringify(payload, null, 2));
     writeMeta(true);
     syncPublicData();
+    appendFetchLog("change", "success", summarizeChangePayload(payload), changeSuccessDetail(payload, apiRequest));
     console.log(`已写入 ${changeFile}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const httpStatus =
+      err && typeof err === "object" && "httpStatus" in err
+        ? (err as { httpStatus?: number }).httpStatus
+        : undefined;
+    const rawBody =
+      err && typeof err === "object" && "rawBody" in err
+        ? (err as { rawBody?: string }).rawBody
+        : lastResponseText;
+    appendFetchLog(
+      "change",
+      "error",
+      `拉取失败：${message}`,
+      changeErrorDetail(message, httpStatus, rawBody, apiRequest),
+    );
     writeMeta(false, message);
     throw err;
   }

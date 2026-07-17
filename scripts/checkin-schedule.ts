@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { appendFetchLog, setCheckinRunning, setSlotSchedule } from "./fetch-log.js";
+import { checkinErrorDetail } from "./fetch-log-detail.js";
 import { getCheckinFile, getCheckinMetaFile } from "./paths.js";
 
 export const CHECKIN_HOUR = 9;
@@ -121,6 +123,12 @@ export function startCheckinScheduler(runDue: () => Promise<void>, onComplete?: 
     if (timer) clearTimeout(timer);
     const ms = msUntilNextCheckinWake();
     const min = Math.round(ms / 60000);
+    const nextAt = Date.now() + ms;
+    setSlotSchedule("checkin", {
+      nextAt,
+      intervalSec: Math.max(1, Math.round(ms / 1000)),
+      detail: `每天 ${CHECKIN_HOUR}:00 · 未签到时 5 分钟重试`,
+    });
     console.log(`[fetch:checkin] 下次签到拉取 ${min} 分钟后（每天 ${CHECKIN_HOUR}:00）`);
     timer = setTimeout(() => void tick(), ms);
   };
@@ -132,12 +140,17 @@ export function startCheckinScheduler(runDue: () => Promise<void>, onComplete?: 
       return;
     }
     running = (async () => {
+      setCheckinRunning(true);
+      appendFetchLog("checkin", "info", "签到 · 开始拉取…");
       try {
         await runDue();
         onComplete?.();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        appendFetchLog("checkin", "error", `拉取失败：${message}`, checkinErrorDetail(message));
         console.warn("[fetch:checkin]", message);
+      } finally {
+        setCheckinRunning(false);
       }
     })().finally(() => {
       running = null;

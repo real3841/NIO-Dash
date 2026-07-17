@@ -3,7 +3,7 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.2.0-green)
+![Version](https://img.shields.io/badge/version-1.3.0-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
@@ -17,6 +17,7 @@
 | **每日签到** | 独立 API，每天 9:00 拉取一次 |
 | **行驶路径** | 按天汇总 GPS 采样并绘制地图轨迹 |
 | **历史趋势** | 电量、续航、里程折线图，每张图可选近 1 / 3 / 5 / 7 日 |
+| **运行日志** | 数据同步面板查看拉取记录、API 请求、完整响应与失败原因 |
 
 ### 车辆看板卡片（26 张）
 
@@ -191,6 +192,7 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `last-fetch.json` | 车辆拉取元信息 |
 | `last-fetch-change.json` | 换电拉取元信息 |
 | `last-fetch-checkin.json` | 签到拉取元信息（含 `run_day`） |
+| `fetch-log.json` | 运行日志（最多 500 条，重启后保留） |
 | `card-layout.json` | 卡片排序与隐藏状态 |
 
 ### 采样说明
@@ -236,6 +238,14 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 仓库内仅包含 `deploy/.env.example`（占位符模板）。上传 Release 的 `.zip` 也不含本机配置与数据。
 
 ## 更新日志
+
+### v1.3.0
+
+- **运行日志**：数据同步 →「运行日志」，查看车辆/换电/签到拉取记录
+- 展示 **API 请求**（完整 URL / Body）、**拉取详情**、**完整 API 响应**（可折叠）
+- 失败时显示原因与修复建议；换电订单摘要使用正确字段（站点、状态名）
+- 日志持久化到 `fetch-log.json`，最多保留 500 条；弹窗内独立滚动列表
+- 打开日志时锁定背景滚动，避免看板跟着滑动
 
 ### v1.2.0
 

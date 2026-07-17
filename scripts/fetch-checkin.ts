@@ -12,6 +12,8 @@ import { fetchCheckinFromApi, loadCheckinFetchConfig } from "./nio-checkin.js";
 import { getCheckinFile, getCheckinMetaFile, getProjectRoot } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
+import { appendFetchLog } from "./fetch-log.js";
+import { buildApiRequestDetail, checkinErrorDetail, checkinSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -51,11 +53,20 @@ export async function runCheckinOnce(): Promise<void> {
   const day = localDayKey();
 
   console.log(`请求 GET ${config.url}`);
+  const apiRequest = buildApiRequestDetail({ url: config.url, method: "GET" });
   const payload = await fetchCheckinFromApi(config);
   fs.mkdirSync(path.dirname(dataFile), { recursive: true });
   fs.writeFileSync(dataFile, JSON.stringify(payload, null, 2));
   writeMeta(true, day);
   syncPublicData();
+  const checkedIn = payload.checked_in === true;
+  const days = payload.continuous_days ?? 0;
+  appendFetchLog(
+    "checkin",
+    "success",
+    `今日${checkedIn ? "已" : "未"}签到 · 连续 ${days} 天`,
+    checkinSuccessDetail(payload, apiRequest),
+  );
   console.log(`已写入 ${dataFile}`);
 }
 
@@ -68,12 +79,15 @@ export async function runCheckinIfDue(now = new Date()): Promise<boolean> {
     if (!shouldRunCheckinNow(now)) return false;
 
     const day = localDayKey(now);
+    const config = loadCheckinFetchConfig();
+    const apiRequest = config ? buildApiRequestDetail({ url: config.url, method: "GET" }) : null;
 
     try {
       await runCheckinOnce();
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      appendFetchLog("checkin", "error", `拉取失败：${message}`, checkinErrorDetail(message, apiRequest));
       writeMeta(false, day, message);
       console.warn("[checkin]", message);
       return false;

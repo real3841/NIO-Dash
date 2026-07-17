@@ -37,6 +37,10 @@ export function getCheckinMetaFile(): string {
   return path.join(getDataDir(), "last-fetch-checkin.json");
 }
 
+export function getFetchLogFile(): string {
+  return path.join(getDataDir(), "fetch-log.json");
+}
+
 export function getPublicDataDir(): string {
   return path.join(getProjectRoot(), "public", "data");
 }

@@ -1,3 +1,4 @@
+import { appendFetchLog, setSlotSchedule } from "./fetch-log.js";
 import { runChangeOnce } from "./fetch-change.js";
 import { runVehicleOnce } from "./fetch-vehicle.js";
 
@@ -82,6 +83,7 @@ function startSlotScheduler(
   runOnce: () => Promise<void>,
   onComplete: (() => void) | null,
   deferInitialTick: boolean,
+  getScheduleDetail?: () => string | null,
 ): FetchScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
@@ -90,12 +92,17 @@ function startSlotScheduler(
     if (stopped) return;
     if (timer) clearTimeout(timer);
     const sec = Math.max(15, getIntervalSec());
+    const nextAt = Date.now() + sec * 1000;
+    const detail = getScheduleDetail?.() ?? null;
+    setSlotSchedule(slot, { nextAt, intervalSec: sec, detail });
     console.log(`[fetch:${slot}] 下次拉取 ${sec} 秒后`);
     timer = setTimeout(() => void tick(), sec * 1000);
   };
 
   const tick = async () => {
     if (stopped) return;
+    const label = slot === "vehicle" ? "车辆" : "换电";
+    appendFetchLog(slot, "info", `${label} · 开始拉取…`);
     try {
       await withLock(slot, runOnce);
       onComplete?.();
@@ -132,6 +139,7 @@ function startSlotScheduler(
 export function startDualFetchScheduler(options: {
   getVehicleIntervalSec: () => number;
   getChangeIntervalSec: () => number;
+  getVehicleScheduleDetail?: () => string | null;
   deferInitialTick?: boolean;
 }): DualFetchScheduler {
   const vehicle = startSlotScheduler(
@@ -140,6 +148,7 @@ export function startDualFetchScheduler(options: {
     runVehicleOnce,
     onVehicleFetchComplete,
     options.deferInitialTick ?? false,
+    options.getVehicleScheduleDetail,
   );
   const change = startSlotScheduler(
     "change",

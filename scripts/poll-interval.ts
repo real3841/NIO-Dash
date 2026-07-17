@@ -48,20 +48,26 @@ export function vehiclePollReason(
   return isDaytime(now) ? "day" : "night";
 }
 
+export function getVehiclePollInfo(
+  env: Record<string, string>,
+  dataDir: string,
+  now = new Date(),
+): { intervalSec: number; reason: "driving" | "day" | "night"; reasonLabel: string } {
+  const driving = parsePollSec(env.NIO_VEHICLE_POLL_DRIVING_SEC, DEFAULT_DRIVING_SEC);
+  const day = parsePollSec(env.NIO_VEHICLE_POLL_DAY_SEC, DEFAULT_DAY_SEC);
+  const night = parsePollSec(env.NIO_VEHICLE_POLL_NIGHT_SEC, DEFAULT_NIGHT_SEC);
+  const state = readVehicleState(dataDir);
+  const reason = vehiclePollReason(state, now);
+  const intervalSec = reason === "driving" ? driving : reason === "day" ? day : night;
+  return { intervalSec, reason, reasonLabel: vehiclePollLabel(reason) };
+}
+
 export function getVehiclePollIntervalSec(
   env: Record<string, string>,
   dataDir: string,
   now = new Date(),
 ): number {
-  const driving = parsePollSec(env.NIO_VEHICLE_POLL_DRIVING_SEC, DEFAULT_DRIVING_SEC);
-  const day = parsePollSec(env.NIO_VEHICLE_POLL_DAY_SEC, DEFAULT_DAY_SEC);
-  const night = parsePollSec(env.NIO_VEHICLE_POLL_NIGHT_SEC, DEFAULT_NIGHT_SEC);
-
-  const state = readVehicleState(dataDir);
-  const reason = vehiclePollReason(state, now);
-  if (reason === "driving") return driving;
-  if (reason === "day") return day;
-  return night;
+  return getVehiclePollInfo(env, dataDir, now).intervalSec;
 }
 
 export function getChangePollIntervalSec(env: Record<string, string>): number {

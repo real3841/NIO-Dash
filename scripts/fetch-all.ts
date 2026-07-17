@@ -10,7 +10,8 @@ import {
   triggerFetch,
   withLock,
 } from "./fetch-server.js";
-import { getChangePollIntervalSec, getVehiclePollIntervalSec } from "./poll-interval.js";
+import { getFetchLogSnapshot } from "./fetch-log.js";
+import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
 import { getDataDir } from "./paths.js";
 
 const ROOT = path.resolve(process.cwd());
@@ -35,6 +36,15 @@ function startTriggerServer(): void {
       if (pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ ok: true, running: isFetchRunning(), at: Date.now() }));
+        return;
+      }
+
+      if (pathname === "/fetch-log" || pathname === "/api/fetch-log") {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify(getFetchLogSnapshot(isFetchRunning())));
         return;
       }
 
@@ -82,6 +92,10 @@ if (watch) {
       getVehiclePollIntervalSec(process.env as Record<string, string>, dataDir),
     getChangeIntervalSec: () =>
       getChangePollIntervalSec(process.env as Record<string, string>),
+    getVehicleScheduleDetail: () => {
+      const info = getVehiclePollInfo(process.env as Record<string, string>, dataDir);
+      return `策略 ${info.reasonLabel} · 间隔 ${info.intervalSec}s`;
+    },
   });
   checkinScheduler = startDailyCheckinScheduler();
 } else if (!serve) {
