@@ -71,6 +71,7 @@ export interface VehicleResponse {
         remaining_actual_range: number;
         sample_time: number;
         lock_soc: number;
+        /** 充电功率，单位 W（如 7000 表示 7 kW） */
         charging_power: number;
         charger_type: number;
       };
@@ -180,17 +181,20 @@ export function buildSeedHistory(current: VehicleSnapshot): VehicleSnapshot[] {
   return points;
 }
 
+export const HISTORY_MAX_POINTS = 2000;
+
 export function mergeHistory(
   stored: VehicleSnapshot[],
   current: VehicleSnapshot,
   seedIfEmpty = true,
+  maxPoints = HISTORY_MAX_POINTS,
 ): VehicleSnapshot[] {
   const base = stored.length > 0 ? stored : seedIfEmpty ? buildSeedHistory(current) : [];
   const exists = base.some((p) => p.ts === current.ts);
   const next = exists ? base : [...base, current];
   return next
     .sort((a, b) => a.ts - b.ts)
-    .slice(-168);
+    .slice(-maxPoints);
 }
 
 export function computeAlerts(data: VehicleResponse): VehicleAlert[] {

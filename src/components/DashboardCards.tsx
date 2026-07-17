@@ -42,6 +42,7 @@ import {
 import {
   autoRows,
   chargerTypeLabel,
+  formatChargingPowerKw,
   maintainStatusLabel,
   onOff,
   rowsFromBlock,
@@ -212,7 +213,7 @@ export function DashboardCards({ data, address, checkin }: Props) {
               rows={[
                 { label: "充电状态", value: chargeStateLabel(s.soc_status.charge_state) },
                 { label: "充电类型", value: chargerTypeLabel(socExtra.charger_type ?? 0) },
-                { label: "充电功率", value: `${socExtra.charging_power ?? 0} kW` },
+                { label: "充电功率", value: formatChargingPowerKw(socExtra.charging_power as number | undefined) },
                 { label: "充电电流", value: `${socExtra.charging_current ?? 0} A` },
                 { label: "充电电压", value: `${socExtra.charging_voltage ?? 0} V` },
                 { label: "限充 SOC", value: `${socExtra.lock_soc ?? "—"}%` },

@@ -1,4 +1,4 @@
-import { StrictMode, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StrictMode, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -27,6 +27,7 @@ import {
   fmtTime,
   isUsableVehicleResponse,
   mergeHistory,
+  HISTORY_MAX_POINTS,
   snapshotFromResponse,
   type VehicleResponse,
   type VehicleSnapshot,
@@ -132,7 +133,10 @@ export default function App() {
           : [...baseHistory, snap].sort((a, b) => a.ts - b.ts)
         : [snap];
     setPathHistory(pathPoints);
-    const nextHistory = mergeHistory(baseHistory, snap);
+    const nextHistory =
+      baseHistory.length > 0
+        ? pathPoints.slice(-HISTORY_MAX_POINTS)
+        : mergeHistory([], snap);
     setHistory(nextHistory);
     if (!serverHistory) {
       saveHistory(nextHistory);
@@ -245,10 +249,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [changePollSec, refresh]);
 
-  const trendHistory = useMemo(() => {
-    if (!data) return history;
-    return mergeHistory(history, snapshotFromResponse(data));
-  }, [data, history]);
+  const trendHistory = pathHistory.length > 0 ? pathHistory : history;
 
   const loading = loadingTarget !== null;
 

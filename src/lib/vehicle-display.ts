@@ -50,6 +50,15 @@ export function chargerTypeLabel(t: number): string {
   );
 }
 
+/** 蔚来 API charging_power 单位为 W，展示为 kW */
+export function formatChargingPowerKw(watts: number | undefined | null): string {
+  if (watts == null || !Number.isFinite(watts)) return "—";
+  const kw = watts / 1000;
+  if (kw === 0) return "0 kW";
+  const rounded = Math.round(kw * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded} kW`;
+}
+
 export function vehlModeLabel(m: number): string {
   return (
     {
