@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getDataDir, getPublicDataDir } from "./paths.js";
+import { isDirectCliInvocation } from "./cli-main.js";
 
 export function syncPublicData(): void {
   if (process.env.NIO_APP_MODE === "electron") return;
@@ -24,6 +25,6 @@ export function syncPublicData(): void {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectCliInvocation("sync-public-data.ts")) {
   syncPublicData();
 }

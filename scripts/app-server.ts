@@ -4,7 +4,7 @@ import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleConfigRequest } from "./env-config-api.js";
 import { getCardLayoutFile, handleCardLayoutRequest } from "./card-layout-api.js";
-import { startDailyCheckinScheduler } from "./fetch-checkin.js";
+import { runCheckinIfDue, startDailyCheckinScheduler } from "./fetch-checkin.js";
 import {
   isFetchRunning,
   setOnChangeFetchComplete,
@@ -91,7 +91,10 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     : null;
 
   if (opts.enableScheduler) {
-    setOnVehicleFetchComplete(notify);
+    setOnVehicleFetchComplete(() => {
+      notify();
+      void runCheckinIfDue();
+    });
     setOnChangeFetchComplete(notify);
   }
 

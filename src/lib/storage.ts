@@ -2,7 +2,7 @@ import type { ChangeResponse } from "./change";
 import type { CheckinData } from "./checkin";
 import { normalizeCheckinData } from "./checkin";
 import type { VehicleResponse, VehicleSnapshot } from "./vehicle";
-import { normalizeVehicleResponse } from "./vehicle";
+import { isUsableVehicleResponse, normalizeVehicleResponse } from "./vehicle";
 import fallbackChange from "../../data/change.json";
 import fallbackVehicle from "../../data/vehicle.json";
 
@@ -88,10 +88,18 @@ export async function fetchVehicleData(): Promise<VehicleResponse> {
     if (!res.ok) {
       throw new Error(`无法加载 /data/vehicle.json (${res.status})`);
     }
-    return normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
+    const normalized = normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
+    if (!isUsableVehicleResponse(normalized)) {
+      throw new Error("vehicle.json 缺少有效车况 data.status");
+    }
+    return normalized;
   } catch (err) {
     console.warn("[dashboard] 使用内置 fallback 数据:", err);
-    return normalizeVehicleResponse(fallbackVehicle as VehicleResponse);
+    const fallback = normalizeVehicleResponse(fallbackVehicle as VehicleResponse);
+    if (!isUsableVehicleResponse(fallback)) {
+      throw new Error("内置 fallback 车辆数据无效");
+    }
+    return fallback;
   }
 }
 

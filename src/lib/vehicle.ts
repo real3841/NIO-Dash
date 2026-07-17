@@ -1,3 +1,5 @@
+import { normalizeRvsVehiclePayload } from "./rvs-normalize";
+
 export interface VehicleSnapshot {
   ts: number;
   soc: number;
@@ -101,8 +103,42 @@ export interface VehicleAlert {
   detail: string;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+
+function hasMinimalStatus(status: Record<string, unknown>): boolean {
+  return isRecord(status.soc_status) && isRecord(status.position_status);
+}
+
+/** 兼容 RVS 接口：vehicle_id 在 data 顶层、字段平铺在 data.*_status */
+export function normalizeVehicleResponse(data: VehicleResponse): VehicleResponse {
+  return normalizeRvsVehiclePayload(data as unknown as Record<string, unknown>) as VehicleResponse;
+}
+
+/** 从任意车辆 JSON 中提取可用的 data.status（含 RVS 平铺格式） */
+export function extractVehicleStatus(data: unknown): VehicleResponse["data"]["status"] | null {
+  if (!isRecord(data)) return null;
+
+  const normalized = normalizeVehicleResponse(data as VehicleResponse);
+  const inner = normalized.data;
+  if (!isRecord(inner)) return null;
+
+  const status = inner.status;
+  if (!isRecord(status) || !hasMinimalStatus(status)) return null;
+
+  return status as VehicleResponse["data"]["status"];
+}
+
+export function isUsableVehicleResponse(data: unknown): data is VehicleResponse {
+  return extractVehicleStatus(data) !== null;
+}
+
 export function snapshotFromResponse(data: VehicleResponse): VehicleSnapshot {
-  const s = data.data.status;
+  const s = extractVehicleStatus(data);
+  if (!s) {
+    throw new Error("车辆数据缺少 data.status");
+  }
   return {
     ts: s.soc_status.sample_time,
     soc: s.soc_status.soc,
@@ -120,13 +156,6 @@ export function formatVehicleId(id: string | undefined): string {
   if (!id) return "—";
   if (id.length <= 9) return id;
   return `${id.slice(0, 4)}…${id.slice(-5)}`;
-}
-
-import { normalizeRvsVehiclePayload } from "./rvs-normalize";
-
-/** 兼容 RVS 接口：vehicle_id 在 data 顶层、字段平铺在 data.*_status */
-export function normalizeVehicleResponse(data: VehicleResponse): VehicleResponse {
-  return normalizeRvsVehiclePayload(data as unknown as Record<string, unknown>) as VehicleResponse;
 }
 
 export function buildSeedHistory(current: VehicleSnapshot): VehicleSnapshot[] {
@@ -166,7 +195,8 @@ export function mergeHistory(
 
 export function computeAlerts(data: VehicleResponse): VehicleAlert[] {
   const alerts: VehicleAlert[] = [];
-  const s = data.data.status;
+  const s = extractVehicleStatus(data);
+  if (!s) return alerts;
   const doors: Array<[string, number]> = [
     ["左前车门", s.door_status.door_ajar_front_left_status],
     ["右前车门", s.door_status.door_ajar_front_right_status],

@@ -1211,6 +1211,50 @@ a {
   font-size: 13px;
 }
 
+.mini-chart-days {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mini-chart-day-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mini-chart-day-btn:hover {
+  border-color: #cbd5e1;
+  color: var(--text);
+}
+
+.mini-chart-day-btn.active {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.mini-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mini-chart-stats {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
 .mini-chart-svg-wrap {
   position: relative;
 }

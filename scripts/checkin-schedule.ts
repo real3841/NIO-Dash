@@ -1,8 +1,10 @@
 import fs from "node:fs";
-import { getCheckinMetaFile } from "./paths.js";
+import { getCheckinFile, getCheckinMetaFile } from "./paths.js";
 
 export const CHECKIN_HOUR = 9;
 export const CHECKIN_MINUTE = 0;
+/** 今日仍为未签到时，最短重试间隔 */
+export const CHECKIN_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
 interface CheckinMeta {
   ok?: boolean;
@@ -44,8 +46,31 @@ export function alreadyRanCheckinToday(now = new Date()): boolean {
   return meta.run_day === localDayKey(now);
 }
 
+export function readCheckinData(): { checked_in?: boolean } {
+  const file = getCheckinFile();
+  if (!fs.existsSync(file)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    return { checked_in: raw.checked_in === true };
+  } catch {
+    return {};
+  }
+}
+
+/** 9 点后已拉过但仍未签到时，隔一段时间再刷新状态 */
+export function needsCheckinRefresh(now = new Date()): boolean {
+  if (!isCheckinWindowOpen(now)) return false;
+  if (!alreadyRanCheckinToday(now)) return false;
+  if (readCheckinData().checked_in === true) return false;
+
+  const at = readCheckinMeta().at ?? 0;
+  return Date.now() - at >= CHECKIN_RETRY_COOLDOWN_MS;
+}
+
 export function shouldRunCheckinNow(now = new Date()): boolean {
-  return isCheckinWindowOpen(now) && !alreadyRanCheckinToday(now);
+  if (!isCheckinWindowOpen(now)) return false;
+  if (!alreadyRanCheckinToday(now)) return true;
+  return needsCheckinRefresh(now);
 }
 
 function atCheckinTime(day: Date, hour = CHECKIN_HOUR, minute = CHECKIN_MINUTE): Date {
@@ -60,6 +85,14 @@ export function msUntilNextCheckinWake(now = new Date()): number {
   const meta = readCheckinMeta();
 
   if (meta.run_day === todayKey) {
+    if (readCheckinData().checked_in !== true) {
+      const nextRetry = (meta.at ?? 0) + CHECKIN_RETRY_COOLDOWN_MS;
+      if (now.getTime() < nextRetry) {
+        return Math.max(1000, nextRetry - now.getTime());
+      }
+      return 0;
+    }
+
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const next = atCheckinTime(tomorrow);

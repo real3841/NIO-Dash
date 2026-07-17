@@ -10,6 +10,7 @@ import {
   getVehicleMetaFile,
 } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
+import { isDirectCliInvocation } from "./cli-main.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -27,7 +28,21 @@ interface Snapshot {
   outsideTemp: number;
 }
 
+function assertVehiclePayload(payload: Record<string, unknown>): void {
+  const code = payload.result_code ?? payload.resultCode;
+  if (code && code !== "success" && code !== "0000") {
+    const desc =
+      payload.display_msg ??
+      payload.message ??
+      payload.debug_msg ??
+      payload.result_desc ??
+      String(code);
+    throw new Error(`车辆 API 失败: ${desc}`);
+  }
+}
+
 function snapshotFromPayload(payload: Record<string, unknown>): Snapshot {
+  assertVehiclePayload(payload);
   const data = payload.data as Record<string, unknown> | undefined;
   const status = data?.status as Record<string, unknown> | undefined;
   if (!status) {
@@ -112,11 +127,11 @@ export async function runVehicleOnce(): Promise<void> {
       throw new Error("请配置 NIO_API_URL 或放置 data/vehicle.json");
     }
 
+    const snap = snapshotFromPayload(payload);
+
     const dataDir = getDataDir();
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(dataFile, JSON.stringify(payload, null, 2));
-
-    const snap = snapshotFromPayload(payload);
     appendHistory(snap);
     writeMeta(true);
 
@@ -131,7 +146,7 @@ export async function runVehicleOnce(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectCliInvocation("fetch-vehicle.ts")) {
   void runVehicleOnce().catch((err) => {
     console.error(err);
     process.exit(1);

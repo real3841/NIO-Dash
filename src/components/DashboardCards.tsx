@@ -30,6 +30,7 @@ import {
   batteryPackLabel,
   chargeStateLabel,
   fmtTime,
+  extractVehicleStatus,
   formatVehicleId,
   fullChargeRangeKm,
   heatLevelLabel,
@@ -86,7 +87,14 @@ function BlockRows({ rows }: { rows: Array<{ label: string; value: ReactNode }> 
 export function DashboardCards({ data, address, checkin }: Props) {
   const [layout, updateLayout] = useCardLayout("vehicle", VEHICLE_CARDS);
   const [rvsModal, setRvsModal] = useState<{ title: string; payload: Record<string, unknown> } | null>(null);
-  const s = data.data.status;
+  const s = extractVehicleStatus(data);
+  if (!s) {
+    return (
+      <section className="panel muted">
+        <p>车辆数据不完整，请刷新或检查 API 配置。</p>
+      </section>
+    );
+  }
   const soc = s.soc_status.soc;
   const locked = s.door_status.vehicle_lock_status === 1;
   const socExtra = s.soc_status as Record<string, number | boolean>;

@@ -22,7 +22,15 @@ import {
   saveHistory,
   type FetchMeta,
 } from "./lib/storage";
-import { fmtTime, mergeHistory, snapshotFromResponse, type VehicleResponse, type VehicleSnapshot } from "./lib/vehicle";
+import {
+  extractVehicleStatus,
+  fmtTime,
+  isUsableVehicleResponse,
+  mergeHistory,
+  snapshotFromResponse,
+  type VehicleResponse,
+  type VehicleSnapshot,
+} from "./lib/vehicle";
 import { hydrateCardLayout } from "./lib/card-layout";
 
 const DailyPathMap = lazy(() =>
@@ -104,6 +112,11 @@ export default function App() {
       loadCheckinFetchMeta(),
     ]);
 
+    if (!isUsableVehicleResponse(payload)) {
+      setErrorVehicle("vehicle.json 缺少有效车况，请检查 Token 或在「数据同步」中刷新");
+      return;
+    }
+
     setData(payload);
     setVehicleMeta(meta);
     setCheckinData(checkin);
@@ -125,8 +138,10 @@ export default function App() {
       saveHistory(nextHistory);
     }
 
-    const pos = payload.data.status.position_status;
-    void reverseGeocode(pos.latitude, pos.longitude).then(setAddress);
+    const pos = extractVehicleStatus(payload)?.position_status;
+    if (pos) {
+      void reverseGeocode(pos.latitude, pos.longitude).then(setAddress);
+    }
 
     if (triggerError) {
       setErrorVehicle(`${triggerError}，已回退读取当前 data/vehicle.json`);
@@ -237,7 +252,9 @@ export default function App() {
 
   const loading = loadingTarget !== null;
 
-  if (!data) {
+  const vehicleStatus = data ? extractVehicleStatus(data) : null;
+
+  if (!vehicleStatus) {
     return (
       <div className="app loading">
         <p>{loading ? "加载车辆数据…" : errorVehicle ?? "初始化中…"}</p>
@@ -268,7 +285,7 @@ export default function App() {
     );
   }
 
-  const s = data.data.status;
+  const s = vehicleStatus;
 
   return (
     <div className="app">

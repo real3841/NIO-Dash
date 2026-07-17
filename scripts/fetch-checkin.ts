@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import {
-  alreadyRanCheckinToday,
   localDayKey,
   readCheckinMeta,
   shouldRunCheckinNow,
@@ -12,6 +11,7 @@ import {
 import { fetchCheckinFromApi, loadCheckinFetchConfig } from "./nio-checkin.js";
 import { getCheckinFile, getCheckinMetaFile, getProjectRoot } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
+import { isDirectCliInvocation } from "./cli-main.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -68,7 +68,6 @@ export async function runCheckinIfDue(now = new Date()): Promise<boolean> {
     if (!shouldRunCheckinNow(now)) return false;
 
     const day = localDayKey(now);
-    if (alreadyRanCheckinToday(now)) return false;
 
     try {
       await runCheckinOnce();
@@ -91,7 +90,7 @@ export function startDailyCheckinScheduler(onComplete?: () => void): CheckinSche
   return startCheckinScheduler(() => runCheckinIfDue(), onComplete);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectCliInvocation("fetch-checkin.ts")) {
   void runCheckinIfDue()
     .then((ran) => {
       if (!ran) console.log("今日签到已拉取或未到 9:00，跳过");

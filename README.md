@@ -3,7 +3,7 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.1.0-green)
+![Version](https://img.shields.io/badge/version-1.2.0-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
@@ -16,7 +16,7 @@
 | **服务订单** | 换电、充电、维保等历史与统计 |
 | **每日签到** | 独立 API，每天 9:00 拉取一次 |
 | **行驶路径** | 按天汇总 GPS 采样并绘制地图轨迹 |
-| **历史趋势** | 电量、续航、里程折线图 |
+| **历史趋势** | 电量、续航、里程折线图，每张图可选近 1 / 3 / 5 / 7 日 |
 
 ### 车辆看板卡片（26 张）
 
@@ -34,7 +34,7 @@
 |------|------|
 | **车辆** | 行驶中 / 白天 09:00–17:00 / 夜间 17:01–08:59 三档间隔，可配置 |
 | **换电** | 独立定时，默认 60 分钟 |
-| **签到** | 每天 **9:00** 一次；9 点后首次打开软件补拉，当天不重复 |
+| **签到** | 每天 **9:00** 一次；9 点后首次打开补拉；未签到时每 5 分钟重试直至已签 |
 
 ## 快速开始
 
@@ -198,6 +198,7 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 - **车况采样时间**：界面显示的 `sample_time` 来自蔚来 API，表示车端上报时刻
 - **历史记录**：每次成功拉取车辆后，按 `soc_status.sample_time` 去重写入 `history.json`
 - **页面刷新**：看板定时重读本地 JSON；后台按行驶/白天/夜间策略调 API
+- **历史趋势**：每张图独立选择近 1 / 3 / 5 / 7 个自然日内的全部采样点，并显示最低 / 最高 / 平均
 
 ## 项目结构
 
@@ -224,7 +225,24 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run fetch:watch` | CLI 后台定时拉取 |
 | `npm run serve:api` | 仅 API 服务 |
 
+## 隐私与安全
+
+以下内容**不会**提交到 GitHub（已在 `.gitignore` 中排除）：
+
+- `deploy/.env`、`config.env` — Token 与完整 API URL
+- `data/` — 本地车况、换电、签到、历史轨迹
+- `release/` — 打包产物
+
+仓库内仅包含 `deploy/.env.example`（占位符模板）。上传 Release 的 `.zip` 也不含本机配置与数据。
+
 ## 更新日志
+
+### v1.2.0
+
+- 历史趋势：电量 / 续航 / 里程支持近 **1 / 3 / 5 / 7 日**切换，显示时段统计
+- 签到：9 点后仍为未签到时 **每 5 分钟重试**；车辆刷新时顺带更新签到状态
+- 车辆数据：API 失败时不再覆盖 `vehicle.json`；前端校验 `data.status`，避免看板白屏
+- 修复 Electron 打包后 `import.meta` CLI 误触发警告（`cli-main.ts`）
 
 ### v1.1.0
 

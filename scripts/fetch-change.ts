@@ -5,6 +5,7 @@ import { assertChangePayload, buildChangeUrl, changeHeadersFromEnv } from "./nio
 import { fetchWithAsciiHeaders } from "./http-headers.js";
 import { getChangeFile, getChangeMetaFile, getDataDir, getProjectRoot } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
+import { isDirectCliInvocation } from "./cli-main.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -89,7 +90,7 @@ export async function runChangeOnce(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectCliInvocation("fetch-change.ts")) {
   void runChangeOnce().catch((err) => {
     console.error(err);
     process.exit(1);
