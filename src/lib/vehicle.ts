@@ -95,13 +95,48 @@ export interface VehicleResponse {
   };
 }
 
-export type AlertTone = "danger" | "warning" | "info" | "success";
 
-export interface VehicleAlert {
-  id: string;
-  tone: AlertTone;
-  title: string;
-  detail: string;
+export const HISTORY_MAX_POINTS = 2000;
+
+export function snapshotHistoryKey(s: VehicleSnapshot): string {
+  return `${s.ts}:${Math.round(s.lat * 1e4)}:${Math.round(s.lng * 1e4)}`;
+}
+
+export function appendSnapshotHistory(
+  stored: VehicleSnapshot[],
+  current: VehicleSnapshot,
+  maxPoints = HISTORY_MAX_POINTS,
+): VehicleSnapshot[] {
+  const key = snapshotHistoryKey(current);
+  if (stored.some((p) => snapshotHistoryKey(p) === key)) {
+    return stored.slice(-maxPoints);
+  }
+  return [...stored, current].sort((a, b) => a.ts - b.ts).slice(-maxPoints);
+}
+
+/** serverHistory 为 null 表示无 history.json；[] 表示服务端尚无记录 */
+export function resolveVehicleHistory(
+  serverHistory: VehicleSnapshot[] | null,
+  localHistory: VehicleSnapshot[],
+  current: VehicleSnapshot,
+): { history: VehicleSnapshot[]; persistLocal: boolean } {
+  if (serverHistory !== null) {
+    return { history: appendSnapshotHistory(serverHistory, current), persistLocal: false };
+  }
+  if (localHistory.length > 0) {
+    return { history: appendSnapshotHistory(localHistory, current), persistLocal: true };
+  }
+  return { history: [current], persistLocal: true };
+}
+
+/** @deprecated 仅保留兼容；不再生成模拟历史 */
+export function mergeHistory(
+  stored: VehicleSnapshot[],
+  current: VehicleSnapshot,
+  _seedIfEmpty = false,
+  maxPoints = HISTORY_MAX_POINTS,
+): VehicleSnapshot[] {
+  return appendSnapshotHistory(stored, current, maxPoints);
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -135,19 +170,30 @@ export function isUsableVehicleResponse(data: unknown): data is VehicleResponse 
   return extractVehicleStatus(data) !== null;
 }
 
+export function isValidGps(lat: number, lng: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) return false;
+  return true;
+}
+
 export function snapshotFromResponse(data: VehicleResponse): VehicleSnapshot {
   const s = extractVehicleStatus(data);
   if (!s) {
     throw new Error("车辆数据缺少 data.status");
   }
+  const lat = s.position_status.latitude;
+  const lng = s.position_status.longitude;
+  const posTs = s.position_status.sample_time;
+  const socTs = s.soc_status.sample_time;
+  const hasPos = isValidGps(lat, lng);
   return {
-    ts: s.soc_status.sample_time,
+    ts: hasPos && posTs ? posTs : socTs,
     soc: s.soc_status.soc,
     range: s.soc_status.remaining_range,
     actualRange: s.soc_status.remaining_actual_range,
     mileage: s.exterior_status.mileage,
-    lat: s.position_status.latitude,
-    lng: s.position_status.longitude,
+    lat,
+    lng,
     insideTemp: s.hvac_status.temperature,
     outsideTemp: s.hvac_status.outside_temperature,
   };
@@ -157,171 +203,6 @@ export function formatVehicleId(id: string | undefined): string {
   if (!id) return "—";
   if (id.length <= 9) return id;
   return `${id.slice(0, 4)}…${id.slice(-5)}`;
-}
-
-export function buildSeedHistory(current: VehicleSnapshot): VehicleSnapshot[] {
-  const points: VehicleSnapshot[] = [];
-  const dayMs = 24 * 60 * 60 * 1000;
-
-  for (let i = 6; i >= 0; i--) {
-    const drift = i / 6;
-    points.push({
-      ts: current.ts - i * dayMs,
-      soc: Math.min(100, Math.max(0, current.soc - drift * 18 + (i % 2) * 3)),
-      range: Math.round(current.range - drift * 90),
-      actualRange: Math.round(current.actualRange - drift * 70),
-      mileage: Math.round(current.mileage - drift * 42),
-      lat: current.lat + (i - 3) * 0.0012,
-      lng: current.lng + (i - 3) * 0.0015,
-      insideTemp: current.insideTemp,
-      outsideTemp: current.outsideTemp + (i - 3) * 0.4,
-    });
-  }
-
-  return points;
-}
-
-export const HISTORY_MAX_POINTS = 2000;
-
-export function mergeHistory(
-  stored: VehicleSnapshot[],
-  current: VehicleSnapshot,
-  seedIfEmpty = true,
-  maxPoints = HISTORY_MAX_POINTS,
-): VehicleSnapshot[] {
-  const base = stored.length > 0 ? stored : seedIfEmpty ? buildSeedHistory(current) : [];
-  const exists = base.some((p) => p.ts === current.ts);
-  const next = exists ? base : [...base, current];
-  return next
-    .sort((a, b) => a.ts - b.ts)
-    .slice(-maxPoints);
-}
-
-export function computeAlerts(data: VehicleResponse): VehicleAlert[] {
-  const alerts: VehicleAlert[] = [];
-  const s = extractVehicleStatus(data);
-  if (!s) return alerts;
-  const doors: Array<[string, number]> = [
-    ["左前车门", s.door_status.door_ajar_front_left_status],
-    ["右前车门", s.door_status.door_ajar_front_right_status],
-    ["左后车门", s.door_status.door_ajar_rear_left_status],
-    ["右后车门", s.door_status.door_ajar_rear_right_status],
-    ["尾门", s.door_status.tailgate_ajar_status],
-    ["前备箱", s.door_status.engine_hood_ajar_status],
-    ["充电口", s.door_status.second_charge_port_ajar_status],
-  ];
-
-  for (const [name, status] of doors) {
-    if (status !== 1) {
-      alerts.push({
-        id: `door-${name}`,
-        tone: "danger",
-        title: `${name}未关闭`,
-        detail: "请确认车辆安全后再离开。",
-      });
-    }
-  }
-
-  if (s.door_status.vehicle_lock_status !== 1) {
-    alerts.push({
-      id: "unlock",
-      tone: "warning",
-      title: "车辆未上锁",
-      detail: "建议远程锁车或检查钥匙距离。",
-    });
-  }
-
-  if (s.soc_status.soc < 10) {
-    alerts.push({
-      id: "soc-critical",
-      tone: "danger",
-      title: "电量极低",
-      detail: `剩余 ${s.soc_status.soc}%，请尽快充电。`,
-    });
-  } else if (s.soc_status.soc < 20) {
-    alerts.push({
-      id: "soc-low",
-      tone: "warning",
-      title: "电量偏低",
-      detail: `剩余 ${s.soc_status.soc}%，建议提前规划补能。`,
-    });
-  }
-
-  if (!s.connection_status.connected) {
-    alerts.push({
-      id: "offline",
-      tone: "danger",
-      title: "车辆离线",
-      detail: "远程连接不可用，数据可能已过期。",
-    });
-  }
-
-  if (!s.connection_status.adc_connected) {
-    alerts.push({
-      id: "adc-offline",
-      tone: "info",
-      title: "ADC 智驾离线",
-      detail: "智驾域控制器未连接，不影响基础远程车况。",
-    });
-  }
-
-  if (s.maintain_status.maintain_status >= 1 && s.maintain_status.current_maintenance_list.length > 0) {
-    const item = s.maintain_status.current_maintenance_list[0];
-    alerts.push({
-      id: "maintain",
-      tone: "info",
-      title: "维保提醒",
-      detail: `${item.name}（${item.code}）`,
-    });
-  }
-
-  const windows: Array<[string, number]> = [
-    ["左前窗", s.window_status.win_front_left_posn],
-    ["右前窗", s.window_status.win_front_right_posn],
-    ["左后窗", s.window_status.win_rear_left_posn],
-    ["右后窗", s.window_status.win_rear_right_posn],
-    ["天窗", s.window_status.sun_roof_posn],
-  ];
-
-  for (const [name, pos] of windows) {
-    if (pos > 0) {
-      alerts.push({
-        id: `window-${name}`,
-        tone: "warning",
-        title: `${name}未完全关闭`,
-        detail: `当前开度 ${Math.round(pos)}%。`,
-      });
-    }
-  }
-
-  if (s.offcar_mode_status.defender_mode >= 2) {
-    alerts.push({
-      id: "defender",
-      tone: "info",
-      title: "守卫模式运行中",
-      detail: "车辆处于守卫监控状态。",
-    });
-  }
-
-  if ((data.data.alarm ?? []).length > 0) {
-    alerts.push({
-      id: "server-alarm",
-      tone: "danger",
-      title: "服务端告警",
-      detail: `收到 ${data.data.alarm.length} 条告警，请查看 App。`,
-    });
-  }
-
-  if (alerts.length === 0) {
-    alerts.push({
-      id: "all-clear",
-      tone: "success",
-      title: "状态正常",
-      detail: "车况正常，无异常告警。",
-    });
-  }
-
-  return alerts;
 }
 
 export function fmtTime(ms: number): string {

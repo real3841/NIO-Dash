@@ -1,7 +1,7 @@
 {
   "name": "nio-mac",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "蔚来车辆看板",
   "author": "NIO Dashboard",
   "main": "electron-dist/main.cjs",
@@ -9,10 +9,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "fetch": "npm run fetch:vehicle && npm run fetch:change",
-    "fetch:vehicle": "tsx scripts/fetch-vehicle.ts && tsx scripts/sync-public-data.ts",
-    "fetch:change": "tsx scripts/fetch-change.ts && tsx scripts/sync-public-data.ts",
+    "fetch": "npm run fetch:vehicle && npm run fetch:change && npm run postfetch",
+    "fetch:vehicle": "tsx scripts/fetch-vehicle.ts",
+    "fetch:change": "tsx scripts/fetch-change.ts",
     "fetch:watch": "tsx scripts/fetch-all.ts --watch",
     "fetch:serve": "tsx scripts/fetch-all.ts --watch --serve",
     "serve:api": "tsx scripts/fetch-all.ts --serve",

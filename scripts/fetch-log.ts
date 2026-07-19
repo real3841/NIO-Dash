@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "./atomic-write.js";
 import { getFetchLogFile } from "./paths.js";
 
 export type FetchLogSlot = "vehicle" | "change" | "checkin" | "system";
@@ -62,7 +63,7 @@ function schedulePersistLogs(): void {
     try {
       const file = getFetchLogFile();
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(logs));
+      writeFileAtomic(file, JSON.stringify(logs));
     } catch {
       // ignore persist errors
     }

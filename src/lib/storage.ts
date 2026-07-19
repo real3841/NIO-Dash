@@ -7,29 +7,12 @@ import fallbackChange from "../../data/change.json";
 import fallbackVehicle from "../../data/vehicle.json";
 
 const HISTORY_KEY = "nio_vehicle_history_v1";
-const CONFIG_KEY = "nio_dashboard_config_v1";
-
-export interface DashboardConfig {
-  pollIntervalSec: number;
-  apiBase: string;
-  vehicleId: string;
-  accessToken: string;
-  useLiveApi: boolean;
-}
 
 export interface FetchMeta {
   ok: boolean;
   at: number;
   error: string | null;
 }
-
-export const DEFAULT_CONFIG: DashboardConfig = {
-  pollIntervalSec: 300,
-  apiBase: "/api/nio",
-  vehicleId: "",
-  accessToken: "",
-  useLiveApi: false,
-};
 
 async function readJsonResponse<T>(res: Response, label: string): Promise<T> {
   const text = await res.text();
@@ -53,20 +36,6 @@ async function readJsonResponse<T>(res: Response, label: string): Promise<T> {
   } catch {
     throw new Error(`${label} 不是合法 JSON`);
   }
-}
-
-export function loadConfig(): DashboardConfig {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    if (!raw) return DEFAULT_CONFIG;
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULT_CONFIG;
-  }
-}
-
-export function saveConfig(config: DashboardConfig): void {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
 }
 
 export function loadHistory(): VehicleSnapshot[] {

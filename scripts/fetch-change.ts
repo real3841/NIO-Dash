@@ -7,6 +7,7 @@ import { getChangeFile, getChangeMetaFile, getDataDir, getProjectRoot } from "./
 import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
 import { appendFetchLog } from "./fetch-log.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { buildApiRequestDetail, changeErrorDetail, changeSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
@@ -15,18 +16,11 @@ loadEnv({ path: path.join(ROOT, ".env") });
 
 function writeMeta(ok: boolean, error?: string): void {
   fs.mkdirSync(getDataDir(), { recursive: true });
-  fs.writeFileSync(
-    getChangeMetaFile(),
-    JSON.stringify(
-      {
-        ok,
-        at: Date.now(),
-        error: error ?? null,
-      },
-      null,
-      2,
-    ),
-  );
+  writeJsonAtomic(getChangeMetaFile(), {
+    ok,
+    at: Date.now(),
+    error: error ?? null,
+  });
 }
 
 function normalizeJson(text: string): Record<string, unknown> {
@@ -102,7 +96,7 @@ export async function runChangeOnce(): Promise<void> {
     assertChangePayload(payload);
 
     fs.mkdirSync(getDataDir(), { recursive: true });
-    fs.writeFileSync(changeFile, JSON.stringify(payload, null, 2));
+    writeJsonAtomic(changeFile, payload);
     writeMeta(true);
     syncPublicData();
     appendFetchLog("change", "success", summarizeChangePayload(payload), changeSuccessDetail(payload, apiRequest));

@@ -101,18 +101,29 @@ function readAll(): Partial<Record<CardSection, CardLayoutState>> {
   return readFromLocalStorage();
 }
 
-function writeAll(data: Record<CardSection, CardLayoutState>): void {
+async function persistCardLayout(data: Record<CardSection, CardLayoutState>): Promise<void> {
   memoryCache = data;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch {
     /* ignore quota / private mode */
   }
-  void fetch("/api/card-layout", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  }).catch(() => {});
+  try {
+    const res = await fetch("/api/card-layout", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      console.warn("[card-layout] 服务端保存失败", res.status);
+    }
+  } catch (err) {
+    console.warn("[card-layout] 服务端不可用，已写入 localStorage", err);
+  }
+}
+
+function writeAll(data: Record<CardSection, CardLayoutState>): void {
+  void persistCardLayout(data);
 }
 
 /** 从服务端文件加载布局（Electron 每次端口不同，localStorage 会丢） */

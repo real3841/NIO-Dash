@@ -13,6 +13,7 @@ import { getCheckinFile, getCheckinMetaFile, getProjectRoot } from "./paths.js";
 import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
 import { appendFetchLog } from "./fetch-log.js";
+import { writeJsonAtomic } from "./atomic-write.js";
 import { buildApiRequestDetail, checkinErrorDetail, checkinSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
@@ -25,20 +26,13 @@ function writeMeta(ok: boolean, runDay: string, error?: string): void {
   const metaFile = getCheckinMetaFile();
   fs.mkdirSync(path.dirname(metaFile), { recursive: true });
   const prev = readCheckinMeta();
-  fs.writeFileSync(
-    metaFile,
-    JSON.stringify(
-      {
-        ...prev,
-        ok,
-        at: Date.now(),
-        run_day: runDay,
-        error: error ?? null,
-      },
-      null,
-      2,
-    ),
-  );
+  writeJsonAtomic(metaFile, {
+    ...prev,
+    ok,
+    at: Date.now(),
+    run_day: runDay,
+    error: error ?? null,
+  });
 }
 
 /** 强制执行签到拉取（CLI 调试用） */
@@ -56,7 +50,7 @@ export async function runCheckinOnce(): Promise<void> {
   const apiRequest = buildApiRequestDetail({ url: config.url, method: "GET" });
   const payload = await fetchCheckinFromApi(config);
   fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-  fs.writeFileSync(dataFile, JSON.stringify(payload, null, 2));
+  writeJsonAtomic(dataFile, payload);
   writeMeta(true, day);
   syncPublicData();
   const checkedIn = payload.checked_in === true;

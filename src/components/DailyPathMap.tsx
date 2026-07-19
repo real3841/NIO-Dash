@@ -7,9 +7,15 @@ import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import {
   buildDailyPaths,
   fmtClock,
+  localDayKey,
   type DailyPath,
 } from "../lib/path-history";
-import type { VehicleSnapshot } from "../lib/vehicle";
+import {
+  loadDrawerOpen,
+  PATH_DRAWER_KEY,
+  saveDrawerOpen,
+} from "../lib/drawer-state";
+import { isValidGps, type VehicleSnapshot } from "../lib/vehicle";
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -67,7 +73,7 @@ function formatDistance(km: number): string {
 export function DailyPathMap({ history, current }: DailyPathMapProps) {
   const dailyPaths = useMemo(() => buildDailyPaths(history), [history]);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => loadDrawerOpen(PATH_DRAWER_KEY, false));
 
   const activeDay = selectedDay ?? dailyPaths[0]?.day ?? null;
   const activePath = dailyPaths.find((p) => p.day === activeDay) ?? null;
@@ -90,12 +96,22 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
         ? `${dailyPaths.length} 天 · ${activePath.label} · ${formatDistance(activePath.distanceKm)}`
         : `${dailyPaths.length} 天记录`;
 
-  const mapCenter = positions[0] ?? (current ? [current.lat, current.lng] : [39.9, 116.4]);
+  const mapCenter = positions[0] ?? (current && isValidGps(current.lat, current.lng) ? [current.lat, current.lng] : [39.9, 116.4]);
+
+  const showCurrent =
+    current &&
+    isValidGps(current.lat, current.lng) &&
+    activeDay === localDayKey(current.ts);
 
   return (
     <details
       className="trend-drawer path-drawer"
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      open={open}
+      onToggle={(e) => {
+        const next = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(next);
+        saveDrawerOpen(PATH_DRAWER_KEY, next);
+      }}
     >
       <summary>
         <span>每日行驶路径</span>
@@ -132,6 +148,7 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
 
           <div className="map-wrap path-map-wrap">
             <MapContainer
+              key={activeDay ?? "map"}
               center={mapCenter as [number, number]}
               zoom={14}
               scrollWheelZoom
@@ -168,7 +185,7 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
                   </CircleMarker>
                 );
               })}
-              {current && activeDay === dayKey(current.ts) && (
+              {showCurrent && (
                 <CircleMarker
                   center={[current.lat, current.lng]}
                   radius={9}
@@ -187,12 +204,4 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
       )}
     </details>
   );
-}
-
-function dayKey(ts: number): string {
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }

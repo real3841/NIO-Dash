@@ -12,6 +12,7 @@ import {
 } from "./fetch-server.js";
 import { getFetchLogSnapshot } from "./fetch-log.js";
 import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
+import { getCardLayoutFile, handleCardLayoutRequest } from "./card-layout-api.js";
 import { getDataDir } from "./paths.js";
 
 const ROOT = path.resolve(process.cwd());
@@ -21,7 +22,9 @@ loadEnv({ path: path.join(ROOT, ".env") });
 const watch = process.argv.includes("--watch");
 const serve = process.argv.includes("--serve");
 const servePort = Number(process.env.NIO_FETCH_PORT ?? 8787);
+const serveHost = process.env.NIO_FETCH_HOST ?? "127.0.0.1";
 const dataDir = getDataDir();
+const cardLayoutFile = getCardLayoutFile(dataDir);
 
 let scheduler: ReturnType<typeof startDualFetchScheduler> | null = null;
 let checkinScheduler: ReturnType<typeof startDailyCheckinScheduler> | null = null;
@@ -46,6 +49,12 @@ function startTriggerServer(): void {
         });
         res.end(JSON.stringify(getFetchLogSnapshot(isFetchRunning())));
         return;
+      }
+
+      if (pathname === "/api/card-layout") {
+        res.writeHead(200, { "Cache-Control": "no-store" });
+        const handled = await handleCardLayoutRequest(req, res, method, cardLayoutFile);
+        if (handled) return;
       }
 
       if (await handleConfigRequest(req, res, pathname, method)) {
@@ -81,8 +90,8 @@ function startTriggerServer(): void {
     })();
   });
 
-  server.listen(servePort, () => {
-    console.log(`API 服务: GET/PUT /config · POST /trigger* · 0.0.0.0:${servePort}`);
+  server.listen(servePort, serveHost, () => {
+    console.log(`API 服务: GET/PUT /config · POST /trigger* · ${serveHost}:${servePort}`);
   });
 }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type http from "node:http";
+import { writeJsonAtomic } from "./atomic-write.js";
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -50,7 +51,7 @@ export async function handleCardLayoutRequest(
         return true;
       }
       fs.mkdirSync(path.dirname(layoutFile), { recursive: true });
-      fs.writeFileSync(layoutFile, JSON.stringify(body, null, 2));
+      writeJsonAtomic(layoutFile, body);
       json(res, 200, { ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

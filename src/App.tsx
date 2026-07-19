@@ -1,12 +1,23 @@
-import { StrictMode, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
-import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SwapHistory } from "./components/SwapHistory";
 import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
 import type { ChangeResponse } from "./lib/change";
 import type { CheckinData } from "./lib/checkin";
+import {
+  loadDrawerOpen,
+  saveDrawerOpen,
+  TREND_DRAWER_KEY,
+} from "./lib/drawer-state";
+import { reverseGeocodeCached } from "./lib/geocode-cache";
+import { hydrateCardLayout } from "./lib/card-layout";
+import {
+  getVehiclePollIntervalSec,
+  parsePollSec,
+  type VehiclePollEnv,
+} from "./lib/poll-schedule";
 import {
   loadFetchMeta,
   loadChangeFetchMeta,
@@ -26,36 +37,30 @@ import {
   extractVehicleStatus,
   fmtTime,
   isUsableVehicleResponse,
-  mergeHistory,
-  HISTORY_MAX_POINTS,
+  isValidGps,
+  resolveVehicleHistory,
   snapshotFromResponse,
   type VehicleResponse,
   type VehicleSnapshot,
 } from "./lib/vehicle";
-import { hydrateCardLayout } from "./lib/card-layout";
 
 const DailyPathMap = lazy(() =>
   import("./components/DailyPathMap").then((m) => ({ default: m.DailyPathMap })),
 );
 
-async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh`,
-      { headers: { "User-Agent": "NioVehicleDashboard/1.0" } },
-    );
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json.display_name?.split(",").slice(0, 2).join("，") ?? null;
-  } catch {
-    return null;
-  }
+const VISIBILITY_API_MIN_MS = 5 * 60 * 1000;
+
+function updateVehiclePollInterval(
+  env: VehiclePollEnv,
+  vehicleState: number | null,
+  setter: (sec: number) => void,
+): void {
+  setter(getVehiclePollIntervalSec(env, vehicleState));
 }
 
 export default function App() {
   const [data, setData] = useState<VehicleResponse | null>(null);
-  const [history, setHistory] = useState(() => loadHistory());
-  const [pathHistory, setPathHistory] = useState<VehicleSnapshot[]>([]);
+  const [history, setHistory] = useState<VehicleSnapshot[]>(() => loadHistory());
   const [loadingTarget, setLoadingTarget] = useState<SyncTarget | null>(null);
   const [errorVehicle, setErrorVehicle] = useState<string | null>(null);
   const [errorChange, setErrorChange] = useState<string | null>(null);
@@ -72,6 +77,12 @@ export default function App() {
   );
   const [vehiclePollSec, setVehiclePollSec] = useState(900);
   const [changePollSec, setChangePollSec] = useState(3600);
+  const [trendOpen, setTrendOpen] = useState(() => loadDrawerOpen(TREND_DRAWER_KEY, false));
+
+  const pollEnvRef = useRef<VehiclePollEnv | null>(null);
+  const lastCoordsRef = useRef<string | null>(null);
+  const lastApiTriggerRef = useRef(0);
+  const initialFetchDone = useRef(false);
 
   useEffect(() => {
     void hydrateCardLayout();
@@ -80,19 +91,25 @@ export default function App() {
   useEffect(() => {
     void fetchEnvConfig()
       .then((cfg) => {
-        const vehicleMin = Math.min(
-          Number(cfg.vehicle.NIO_VEHICLE_POLL_DRIVING_SEC) || 900,
-          Number(cfg.vehicle.NIO_VEHICLE_POLL_DAY_SEC) || 1800,
-          Number(cfg.vehicle.NIO_VEHICLE_POLL_NIGHT_SEC) || 3600,
+        pollEnvRef.current = cfg.vehicle;
+        setChangePollSec(
+          parsePollSec(
+            cfg.change.NIO_CHANGE_POLL_INTERVAL || cfg.general.NIO_POLL_INTERVAL,
+            3600,
+          ),
         );
-        const change =
-          Number(cfg.change.NIO_CHANGE_POLL_INTERVAL) ||
-          Number(cfg.general.NIO_POLL_INTERVAL) ||
-          3600;
-        setVehiclePollSec(Math.max(15, vehicleMin));
-        setChangePollSec(Math.max(15, change));
+        updateVehiclePollInterval(cfg.vehicle, null, setVehiclePollSec);
       })
       .catch(() => {});
+  }, []);
+
+  const refreshCheckin = useCallback(async () => {
+    const [checkin, checkinMetaResult] = await Promise.all([
+      fetchCheckinData(),
+      loadCheckinFetchMeta(),
+    ]);
+    setCheckinData(checkin);
+    setCheckinMeta(checkinMetaResult);
   }, []);
 
   const refreshVehicle = useCallback(async (triggerFetch: boolean) => {
@@ -100,6 +117,7 @@ export default function App() {
     if (triggerFetch) {
       try {
         await triggerServerFetchVehicle();
+        lastApiTriggerRef.current = Date.now();
       } catch (err) {
         triggerError = err instanceof Error ? err.message : "触发车辆拉取失败";
       }
@@ -124,27 +142,30 @@ export default function App() {
     setCheckinMeta(checkinMetaResult);
     setLastSyncVehicle(Date.now());
 
+    const status = extractVehicleStatus(payload);
+    const vehicleState = status?.exterior_status.vehicle_state ?? null;
+    if (pollEnvRef.current) {
+      updateVehiclePollInterval(pollEnvRef.current, vehicleState, setVehiclePollSec);
+    }
+
     const snap = snapshotFromResponse(payload);
-    const baseHistory = serverHistory ?? loadHistory();
-    const pathPoints =
-      baseHistory.length > 0
-        ? baseHistory.some((p) => p.ts === snap.ts)
-          ? baseHistory
-          : [...baseHistory, snap].sort((a, b) => a.ts - b.ts)
-        : [snap];
-    setPathHistory(pathPoints);
-    const nextHistory =
-      baseHistory.length > 0
-        ? pathPoints.slice(-HISTORY_MAX_POINTS)
-        : mergeHistory([], snap);
+    const { history: nextHistory, persistLocal } = resolveVehicleHistory(
+      serverHistory,
+      loadHistory(),
+      snap,
+    );
     setHistory(nextHistory);
-    if (!serverHistory) {
+    if (persistLocal) {
       saveHistory(nextHistory);
     }
 
-    const pos = extractVehicleStatus(payload)?.position_status;
-    if (pos) {
-      void reverseGeocode(pos.latitude, pos.longitude).then(setAddress);
+    const pos = status?.position_status;
+    if (pos && isValidGps(pos.latitude, pos.longitude)) {
+      const coordKey = `${Math.round(pos.latitude * 1000)}:${Math.round(pos.longitude * 1000)}`;
+      if (coordKey !== lastCoordsRef.current) {
+        lastCoordsRef.current = coordKey;
+        void reverseGeocodeCached(pos.latitude, pos.longitude).then(setAddress);
+      }
     }
 
     if (triggerError) {
@@ -170,13 +191,14 @@ export default function App() {
     }
     setChangeMeta(meta);
     setLastSyncChange(Date.now());
+    await refreshCheckin();
 
     if (triggerError) {
       setErrorChange(`${triggerError}，已回退读取当前 data/change.json`);
     } else {
       setErrorChange(null);
     }
-  }, []);
+  }, [refreshCheckin]);
 
   const refresh = useCallback(
     async (target: SyncTarget, triggerFetch = false) => {
@@ -188,6 +210,7 @@ export default function App() {
         if (target === "all" && triggerFetch) {
           try {
             await triggerServerFetch();
+            lastApiTriggerRef.current = Date.now();
           } catch (err) {
             const msg = err instanceof Error ? err.message : "触发拉取失败";
             setErrorVehicle(`${msg}，已回退读取本地 JSON`);
@@ -214,12 +237,9 @@ export default function App() {
     [refreshChange, refreshVehicle],
   );
 
-  const initialFetchDone = useRef(false);
-
   useEffect(() => {
     void (async () => {
-      await refresh("vehicle", false);
-      await refresh("change", false);
+      await Promise.all([refresh("vehicle", false), refresh("change", false)]);
       initialFetchDone.current = true;
       void refresh("vehicle", true);
     })();
@@ -229,30 +249,32 @@ export default function App() {
   useEffect(() => {
     const onVisible = () => {
       if (!initialFetchDone.current || document.visibilityState !== "visible") return;
-      void refresh("vehicle", true);
+      void refresh("vehicle", false);
+      void refreshCheckin();
+      const elapsed = Date.now() - lastApiTriggerRef.current;
+      if (elapsed >= VISIBILITY_API_MIN_MS) {
+        void refresh("vehicle", true);
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [refresh]);
+  }, [refresh, refreshCheckin]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void refresh("vehicle");
+      void refresh("vehicle", false);
     }, vehiclePollSec * 1000);
     return () => window.clearInterval(timer);
   }, [vehiclePollSec, refresh]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void refresh("change");
+      void refresh("change", false);
     }, changePollSec * 1000);
     return () => window.clearInterval(timer);
   }, [changePollSec, refresh]);
 
-  const trendHistory = pathHistory.length > 0 ? pathHistory : history;
-
   const loading = loadingTarget !== null;
-
   const vehicleStatus = data ? extractVehicleStatus(data) : null;
 
   if (!vehicleStatus) {
@@ -276,9 +298,13 @@ export default function App() {
             changeMeta={changeMeta}
             errorVehicle={errorVehicle}
             errorChange={errorChange}
-            onPollConfigLoaded={(vehicleMin, change) => {
-              setVehiclePollSec(vehicleMin);
-              setChangePollSec(change);
+            vehiclePollSec={vehiclePollSec}
+            changePollSec={changePollSec}
+            onPollConfigLoaded={(vehicleEnv, changeSec) => {
+              pollEnvRef.current = vehicleEnv;
+              setChangePollSec(changeSec);
+              const state = data ? extractVehicleStatus(data)?.exterior_status.vehicle_state ?? null : null;
+              updateVehiclePollInterval(vehicleEnv, state, setVehiclePollSec);
             }}
           />
         )}
@@ -287,6 +313,7 @@ export default function App() {
   }
 
   const s = vehicleStatus;
+  const posTs = s.position_status.sample_time || s.soc_status.sample_time;
 
   return (
     <div className="app">
@@ -345,31 +372,42 @@ export default function App() {
           checkinData={checkinData}
           errorVehicle={errorVehicle}
           errorChange={errorChange}
-          onPollConfigLoaded={(vehicleMin, change) => {
-            setVehiclePollSec(vehicleMin);
-            setChangePollSec(change);
+          vehiclePollSec={vehiclePollSec}
+          changePollSec={changePollSec}
+          onPollConfigLoaded={(vehicleEnv, changeSec) => {
+            pollEnvRef.current = vehicleEnv;
+            setChangePollSec(changeSec);
+            updateVehiclePollInterval(vehicleEnv, s.exterior_status.vehicle_state, setVehiclePollSec);
           }}
         />
       )}
 
-      <DashboardCards data={data} address={address} checkin={checkinData} />
+      <DashboardCards data={data!} address={address} checkin={checkinData} />
 
       <Suspense fallback={<section className="panel muted">地图加载中…</section>}>
         <DailyPathMap
-          history={pathHistory}
+          history={history}
           current={{
             lat: s.position_status.latitude,
             lng: s.position_status.longitude,
-            ts: s.position_status.sample_time,
+            ts: posTs,
           }}
         />
       </Suspense>
 
       {changeData && <SwapHistory data={changeData} />}
 
-      <details className="trend-drawer">
+      <details
+        className="trend-drawer"
+        open={trendOpen}
+        onToggle={(e) => {
+          const open = (e.currentTarget as HTMLDetailsElement).open;
+          setTrendOpen(open);
+          saveDrawerOpen(TREND_DRAWER_KEY, open);
+        }}
+      >
         <summary>历史趋势</summary>
-        <TrendCharts history={trendHistory} />
+        {trendOpen && <TrendCharts history={history} />}
       </details>
     </div>
   );

@@ -13,22 +13,18 @@ import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
 import { appendFetchLog } from "./fetch-log.js";
 import { buildApiRequestDetail, vehicleErrorDetail, vehicleSuccessDetail } from "./fetch-log-detail.js";
+import { normalizeRvsVehiclePayload } from "./nio-rvs.js";
+import { writeJsonAtomic } from "./atomic-write.js";
+import {
+  appendSnapshotHistory,
+  HISTORY_MAX_POINTS,
+  snapshotFromResponse,
+  type VehicleSnapshot,
+} from "../src/lib/vehicle.js";
 
 const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
 loadEnv({ path: path.join(ROOT, ".env") });
-
-interface Snapshot {
-  ts: number;
-  soc: number;
-  range: number;
-  actualRange: number;
-  mileage: number;
-  lat: number;
-  lng: number;
-  insideTemp: number;
-  outsideTemp: number;
-}
 
 function assertVehiclePayload(payload: Record<string, unknown>): void {
   const code = payload.result_code ?? payload.resultCode;
@@ -43,60 +39,33 @@ function assertVehiclePayload(payload: Record<string, unknown>): void {
   }
 }
 
-function snapshotFromPayload(payload: Record<string, unknown>): Snapshot {
+function normalizePayload(payload: Record<string, unknown>): Record<string, unknown> {
   assertVehiclePayload(payload);
-  const data = payload.data as Record<string, unknown> | undefined;
-  const status = data?.status as Record<string, unknown> | undefined;
-  if (!status) {
-    throw new Error("API 响应缺少 data.status，请检查 URL 或 Token 是否有效");
-  }
-  const soc = (status.soc_status ?? {}) as Record<string, number>;
-  const ext = (status.exterior_status ?? {}) as Record<string, number>;
-  const pos = (status.position_status ?? {}) as Record<string, number>;
-  const hvac = (status.hvac_status ?? {}) as Record<string, number>;
-  return {
-    ts: soc.sample_time ?? Date.now(),
-    soc: soc.soc ?? 0,
-    range: soc.remaining_range ?? 0,
-    actualRange: soc.remaining_actual_range ?? 0,
-    mileage: ext.mileage ?? 0,
-    lat: pos.latitude ?? 0,
-    lng: pos.longitude ?? 0,
-    insideTemp: hvac.temperature ?? 0,
-    outsideTemp: hvac.outside_temperature ?? 0,
-  };
+  return normalizeRvsVehiclePayload(payload) as Record<string, unknown>;
 }
 
-function appendHistory(snapshot: Snapshot): void {
+function snapshotFromPayload(payload: Record<string, unknown>): VehicleSnapshot {
+  return snapshotFromResponse(payload as never);
+}
+
+function appendHistory(snapshot: VehicleSnapshot): void {
   const historyFile = getHistoryFile();
-  let history: Snapshot[] = [];
+  let history: VehicleSnapshot[] = [];
   if (fs.existsSync(historyFile)) {
-    history = JSON.parse(fs.readFileSync(historyFile, "utf8"));
+    history = JSON.parse(fs.readFileSync(historyFile, "utf8")) as VehicleSnapshot[];
   }
-  if (!history.some((p) => p.ts === snapshot.ts)) {
-    history.push(snapshot);
-  }
-  history.sort((a, b) => a.ts - b.ts);
-  history = history.slice(-2000);
-  fs.mkdirSync(path.dirname(historyFile), { recursive: true });
-  fs.writeFileSync(historyFile, JSON.stringify(history, null, 2));
+  history = appendSnapshotHistory(history, snapshot, HISTORY_MAX_POINTS);
+  writeJsonAtomic(historyFile, history);
 }
 
 function writeMeta(ok: boolean, error?: string): void {
   const dataDir = getDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(
-    getVehicleMetaFile(),
-    JSON.stringify(
-      {
-        ok,
-        at: Date.now(),
-        error: error ?? null,
-      },
-      null,
-      2,
-    ),
-  );
+  writeJsonAtomic(getVehicleMetaFile(), {
+    ok,
+    at: Date.now(),
+    error: error ?? null,
+  });
 }
 
 export async function runVehicleOnce(): Promise<void> {
@@ -132,11 +101,12 @@ export async function runVehicleOnce(): Promise<void> {
       throw new Error("请配置 NIO_API_URL 或放置 data/vehicle.json");
     }
 
-    const snap = snapshotFromPayload(payload);
+    const normalized = normalizePayload(payload!);
+    const snap = snapshotFromPayload(normalized);
 
     const dataDir = getDataDir();
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(dataFile, JSON.stringify(payload, null, 2));
+    writeJsonAtomic(dataFile, normalized);
     appendHistory(snap);
     writeMeta(true);
 
@@ -146,7 +116,7 @@ export async function runVehicleOnce(): Promise<void> {
       "vehicle",
       "success",
       `采样 ${new Date(snap.ts).toLocaleString("zh-CN")} · 电量 ${snap.soc}% · 标准续航 ${snap.range}km · 实际 ${snap.actualRange}km · 里程 ${snap.mileage.toLocaleString()}km`,
-      vehicleSuccessDetail(payload, snap, apiRequest),
+      vehicleSuccessDetail(normalized, snap, apiRequest),
     );
 
     console.log(`已写入 ${dataFile}`);

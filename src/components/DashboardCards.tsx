@@ -1,5 +1,4 @@
-import type { ReactNode } from "react";
-import { useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import {
   AddressPill,
   DashCard,
@@ -85,7 +84,7 @@ function BlockRows({ rows }: { rows: Array<{ label: string; value: ReactNode }> 
   );
 }
 
-export function DashboardCards({ data, address, checkin }: Props) {
+export const DashboardCards = memo(function DashboardCards({ data, address, checkin }: Props) {
   const [layout, updateLayout] = useCardLayout("vehicle", VEHICLE_CARDS);
   const [rvsModal, setRvsModal] = useState<{ title: string; payload: Record<string, unknown> } | null>(null);
   const s = extractVehicleStatus(data);
@@ -612,4 +611,4 @@ export function DashboardCards({ data, address, checkin }: Props) {
       )}
     </>
   );
-}
+});

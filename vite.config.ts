@@ -44,6 +44,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => "/trigger/change",
       },
+      "/api/fetch-log": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+        rewrite: () => "/fetch-log",
+      },
+      "/api/card-layout": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
     },
   },
 });

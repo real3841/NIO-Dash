@@ -3,7 +3,7 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.4.0-green)
+![Version](https://img.shields.io/badge/version-1.5.0-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
@@ -179,7 +179,7 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | 批量管理 | 数据同步 → 卡片管理（默认折叠） |
 | 恢复默认 | 卡片管理内「恢复默认」 |
 
-布局保存在 `card-layout.json`（与 `config.env` 同目录），并备份到浏览器 `localStorage`。
+布局优先保存在 `card-layout.json`（与 `config.env` 同目录）；纯 Web 开发时同步写入浏览器 `localStorage` 作为备份。
 
 ## 数据文件
 
@@ -223,11 +223,22 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run electron:pack` | 打包 `.app` |
 | `npm run electron:pack:dmg` | 打包 DMG |
 | `npm run build` | 仅构建前端 |
+| `npm run typecheck` | TypeScript 类型检查 |
 | `npm run fetch` | 手动拉取车辆 + 换电 |
 | `npm run fetch:watch` | CLI 后台定时拉取 |
 | `npm run serve:api` | 仅 API 服务 |
 
 ## 更新日志
+
+### v1.5.0
+
+- **每日行驶路径修复**：统一使用 `history.json` 真实采样；过滤无效 GPS；位置时间戳与当前位置标记对齐
+- 移除模拟历史数据；服务端 `history.json` 为空时显示「暂无数据」
+- 前端 JSON 轮询间隔随行驶/白天/夜间策略动态调整；定时器仅读本地 JSON，不再重复触发 API
+- 切回窗口时 5 分钟内不重复拉 API；逆地理编码结果缓存
+- 趋势图降采样（最多 180 点/图）；卡片组件 memo 优化
+- JSON 原子写入；Vite / NAS nginx 补全 `/api/fetch-log`、`/api/card-layout` 代理
+- 开发：`npm run typecheck`；`NIO_DEVTOOLS=1` 才自动打开 DevTools
 
 ### v1.4.0
 

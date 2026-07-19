@@ -1,4 +1,7 @@
-import type { VehicleSnapshot } from "./vehicle";
+import { dayLabel, fmtClock, localDayKey } from "./date-utils";
+import { isValidGps, type VehicleSnapshot } from "./vehicle";
+
+export { fmtClock };
 
 export interface DailyPath {
   day: string;
@@ -10,23 +13,7 @@ export interface DailyPath {
 }
 
 const MIN_MOVE_METERS = 25;
-
-function dayKey(ts: number): string {
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function dayLabel(key: string): string {
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("zh-CN", {
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-  });
-}
+const MIN_TIME_GAP_MS = 30 * 60 * 1000;
 
 export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
@@ -39,7 +26,7 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-/** 去掉连续重复/微动点，保留有实际位移的采样 */
+/** 去掉连续重复/微动点，保留有实际位移或长时间停放的采样 */
 export function simplifyPathPoints(points: VehicleSnapshot[]): VehicleSnapshot[] {
   if (points.length <= 1) return points;
 
@@ -50,12 +37,13 @@ export function simplifyPathPoints(points: VehicleSnapshot[]): VehicleSnapshot[]
     const p = sorted[i];
     const last = out[out.length - 1];
     const moved = haversineMeters(last.lat, last.lng, p.lat, p.lng);
-    if (moved >= MIN_MOVE_METERS) {
+    const elapsed = p.ts - last.ts;
+    if (moved >= MIN_MOVE_METERS || elapsed >= MIN_TIME_GAP_MS) {
       out.push(p);
     }
   }
 
-  return out.length >= 2 ? out : sorted.slice(0, 1);
+  return out.length >= 2 ? out : sorted;
 }
 
 export function pathDistanceKm(points: VehicleSnapshot[]): number {
@@ -75,8 +63,8 @@ export function buildDailyPaths(history: VehicleSnapshot[]): DailyPath[] {
   const byDay = new Map<string, VehicleSnapshot[]>();
 
   for (const point of history) {
-    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
-    const key = dayKey(point.ts);
+    if (!isValidGps(point.lat, point.lng)) continue;
+    const key = localDayKey(point.ts);
     const bucket = byDay.get(key);
     if (bucket) bucket.push(point);
     else byDay.set(key, [point]);
@@ -100,6 +88,4 @@ export function buildDailyPaths(history: VehicleSnapshot[]): DailyPath[] {
   return paths.sort((a, b) => b.day.localeCompare(a.day));
 }
 
-export function fmtClock(ts: number): string {
-  return new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-}
+export { localDayKey };

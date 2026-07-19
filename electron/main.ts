@@ -173,7 +173,7 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
     return { action: "deny" };
   });
 
-  if (!app.isPackaged) {
+  if (!app.isPackaged && process.env.NIO_DEVTOOLS === "1") {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
 

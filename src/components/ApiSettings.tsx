@@ -15,6 +15,8 @@ import {
   type VehicleEnv,
 } from "../lib/env-config";
 import { fmtTime } from "../lib/vehicle";
+import { parsePollSec } from "../lib/poll-schedule";
+import type { VehiclePollEnv } from "../lib/poll-schedule";
 import { EnvConfigForm } from "./EnvConfigForm";
 import { TrayDisplaySettings } from "./TrayDisplaySettings";
 import { CardLayoutSettings } from "./CardLayoutSettings";
@@ -29,30 +31,19 @@ interface ApiSettingsProps {
   lastSyncChange: number | null;
   vehicleMeta: FetchMeta | null;
   changeMeta: FetchMeta | null;
-  checkinMeta: FetchMeta | null;
-  checkinData: CheckinData | null;
+  checkinMeta?: FetchMeta | null;
+  checkinData?: CheckinData | null;
   errorVehicle: string | null;
   errorChange: string | null;
-  onPollConfigLoaded: (vehicleMinSec: number, changeSec: number) => void;
+  vehiclePollSec?: number;
+  changePollSec?: number;
+  onPollConfigLoaded: (vehicleEnv: VehiclePollEnv, changeSec: number) => void;
 }
 
-function metaLine(meta: FetchMeta | null): string {
+function metaLine(meta: FetchMeta | null | undefined): string {
   if (!meta) return "暂无拉取记录";
   if (meta.ok) return `拉取成功 · ${fmtTime(meta.at)}`;
   return `拉取失败 · ${meta.error ?? "未知错误"}`;
-}
-
-function parsePollSec(value: string | undefined, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? Math.max(15, Math.floor(n)) : fallback;
-}
-
-function vehicleMinPollSec(vehicle: VehicleEnv): number {
-  return Math.min(
-    parsePollSec(vehicle.NIO_VEHICLE_POLL_DRIVING_SEC, 900),
-    parsePollSec(vehicle.NIO_VEHICLE_POLL_DAY_SEC, 1800),
-    parsePollSec(vehicle.NIO_VEHICLE_POLL_NIGHT_SEC, 3600),
-  );
 }
 
 export function ApiSettings({
@@ -66,6 +57,8 @@ export function ApiSettings({
   checkinData,
   errorVehicle,
   errorChange,
+  vehiclePollSec,
+  changePollSec,
   onPollConfigLoaded,
 }: ApiSettingsProps) {
   const [envConfig, setEnvConfig] = useState<EnvConfigResponse | null>(null);
@@ -102,7 +95,7 @@ export function ApiSettings({
       };
       setVehicleDraft(vehicle);
       setChangeDraft(change);
-      onPollConfigLoaded(vehicleMinPollSec(vehicle), parsePollSec(change.NIO_CHANGE_POLL_INTERVAL, 3600));
+      onPollConfigLoaded(vehicle, parsePollSec(change.NIO_CHANGE_POLL_INTERVAL, 3600));
     } catch (err) {
       setConfigError(err instanceof Error ? err.message : "无法加载配置");
     } finally {
@@ -359,8 +352,8 @@ export function ApiSettings({
 
       <div className="sync-meta">
         <span>
-          页面重读 JSON：车辆约每 {vehicleDraft ? vehicleMinPollSec(vehicleDraft) : "—"}s · 换电每{" "}
-          {changeDraft ? parsePollSec(changeDraft.NIO_CHANGE_POLL_INTERVAL, 3600) : "—"}s
+          页面重读 JSON：车辆约每 {vehiclePollSec ?? "—"}s（随行驶/白天/夜间变化） · 换电每{" "}
+          {changePollSec ?? (changeDraft ? parsePollSec(changeDraft.NIO_CHANGE_POLL_INTERVAL, 3600) : "—")}s
         </span>
         <button
           type="button"

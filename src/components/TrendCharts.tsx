@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { decimateIndices } from "../lib/chart-utils";
+import {
+  dayBoundsFromKey,
+  dayLabel as formatDayLabel,
+  localDayKey,
+  startOfLocalDay,
+} from "../lib/date-utils";
 import type { VehicleSnapshot } from "../lib/vehicle";
 import { fmtTime } from "../lib/vehicle";
 
@@ -18,6 +25,7 @@ const X_GUTTER = 24;
 const SOC_STEP = 10;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
+const MAX_CHART_POINTS = 180;
 
 interface RangeFilterResult {
   points: VehicleSnapshot[];
@@ -30,26 +38,6 @@ interface ChartPoint {
   y: number;
   value: number;
   ts: number;
-}
-
-function startOfLocalDay(ts = Date.now()): number {
-  const d = new Date(ts);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function localDayKey(ts = Date.now()): string {
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function dayBoundsFromKey(key: string): { start: number; end: number } {
-  const [y, m, d] = key.split("-").map(Number);
-  const start = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-  return { start, end: start + 24 * 60 * 60 * 1000 };
 }
 
 function presetDateRange(days: number): { start: string; end: string } {
@@ -253,8 +241,7 @@ function computeDailyMileageDeltas(points: VehicleSnapshot[]): Array<{ day: stri
 }
 
 function formatDayZh(day: string): string {
-  const [, m, d] = day.split("-").map(Number);
-  return `${m}月${d}日`;
+  return formatDayLabel(day);
 }
 
 function dailyDeltaTimestamp(day: string): number {
@@ -412,9 +399,30 @@ function MiniChart({
     return undefined;
   }, [values, gridMode]);
 
+  const displaySeries = useMemo(() => {
+    if (values.length <= MAX_CHART_POINTS) {
+      return { values, timestamps };
+    }
+    const indices = decimateIndices(values.length, MAX_CHART_POINTS);
+    return {
+      values: indices.map((i) => values[i]),
+      timestamps: indices.map((i) => timestamps[i]),
+    };
+  }, [values, timestamps]);
+
   const points = useMemo(
-    () => buildPoints(values, timestamps, plotW, CHART_H, CHART_PAD, xGutter, Y_LABEL_W, yDomain),
-    [values, timestamps, plotW, xGutter, yDomain],
+    () =>
+      buildPoints(
+        displaySeries.values,
+        displaySeries.timestamps,
+        plotW,
+        CHART_H,
+        CHART_PAD,
+        xGutter,
+        Y_LABEL_W,
+        yDomain,
+      ),
+    [displaySeries, plotW, xGutter, yDomain],
   );
   const path = linePath(points, CHART_H, CHART_PAD, yDomain);
   const gridTicks = useMemo(() => buildGridTicks(values, gridMode, yDomain), [values, gridMode, yDomain]);
