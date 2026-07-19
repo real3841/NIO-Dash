@@ -1,7 +1,7 @@
 {
   "name": "nio-mac",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "蔚来车辆看板",
   "author": "NIO Dashboard",
   "main": "electron-dist/main.cjs",

@@ -17,7 +17,14 @@ import {
 import { fmtTime } from "../lib/vehicle";
 import { parsePollSec } from "../lib/poll-schedule";
 import type { VehiclePollEnv } from "../lib/poll-schedule";
+import {
+  isChangeApiConfigured,
+  isCheckinApiConfigured,
+  isVehicleApiConfigured,
+  resolveApiStatus,
+} from "../lib/api-status";
 import { EnvConfigForm } from "./EnvConfigForm";
+import { ApiStatusBadge } from "./ApiStatusBadge";
 import { TrayDisplaySettings } from "./TrayDisplaySettings";
 import { CardLayoutSettings } from "./CardLayoutSettings";
 import { SyncRuntimeLogModal } from "./SyncRuntimeLogModal";
@@ -145,6 +152,19 @@ export function ApiSettings({
     }
   };
 
+  const vehicleStatus = resolveApiStatus(
+    vehicleMeta,
+    isVehicleApiConfigured(vehicleDraft),
+  );
+  const changeStatus = resolveApiStatus(
+    changeMeta,
+    isChangeApiConfigured(changeDraft),
+  );
+  const checkinStatus = resolveApiStatus(
+    checkinMeta,
+    isCheckinApiConfigured(vehicleDraft),
+  );
+
   return (
     <section className="panel api-panel">
       <div className="panel-head">
@@ -195,7 +215,10 @@ export function ApiSettings({
       <div className="sync-split sync-split-3">
         <div className="sync-block">
           <div className="sync-block-head">
-            <h3>车辆 API 配置</h3>
+            <div className="sync-block-title">
+              <h3>车辆 API 配置</h3>
+              <ApiStatusBadge status={vehicleStatus} meta={vehicleMeta} />
+            </div>
             <button
               type="button"
               className="btn ghost btn-sm"
@@ -252,7 +275,10 @@ export function ApiSettings({
 
         <div className="sync-block">
           <div className="sync-block-head">
-            <h3>换电 API 配置</h3>
+            <div className="sync-block-title">
+              <h3>换电 API 配置</h3>
+              <ApiStatusBadge status={changeStatus} meta={changeMeta} />
+            </div>
             <button
               type="button"
               className="btn ghost btn-sm"
@@ -305,7 +331,10 @@ export function ApiSettings({
 
         <div className="sync-block">
           <div className="sync-block-head">
-            <h3>签到 API 配置</h3>
+            <div className="sync-block-title">
+              <h3>签到 API 配置</h3>
+              <ApiStatusBadge status={checkinStatus} meta={checkinMeta} />
+            </div>
             <button
               type="button"
               className="btn ghost btn-sm"

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, useMap } from "react-leaflet";
+import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -29,20 +29,101 @@ interface DailyPathMapProps {
   current?: { lat: number; lng: number; ts: number } | null;
 }
 
-function FitBounds({ positions }: { positions: [number, number][] }) {
+function MapLayout({ positions, enabled }: { positions: [number, number][]; enabled: boolean }) {
   const map = useMap();
 
   useEffect(() => {
-    if (positions.length === 0) return;
-    if (positions.length === 1) {
-      map.setView(positions[0], 15);
-      return;
-    }
-    const bounds = L.latLngBounds(positions);
-    map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
-  }, [map, positions]);
+    if (!enabled) return;
+
+    const layout = () => {
+      map.invalidateSize({ animate: false });
+      if (positions.length === 0) return;
+      if (positions.length === 1) {
+        map.setView(positions[0], 15);
+        return;
+      }
+      map.fitBounds(L.latLngBounds(positions), { padding: [28, 28], maxZoom: 16 });
+    };
+
+    layout();
+    const raf = requestAnimationFrame(layout);
+    const t1 = window.setTimeout(layout, 120);
+    const t2 = window.setTimeout(layout, 400);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [map, enabled, positions]);
 
   return null;
+}
+
+function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLng = toRad(lng2 - lng1);
+  const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+function segmentMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+interface PathArrow {
+  lat: number;
+  lng: number;
+  bearing: number;
+}
+
+function buildPathArrows(positions: [number, number][], maxArrows = 12): PathArrow[] {
+  if (positions.length < 2) return [];
+
+  const segmentCount = positions.length - 1;
+  const step = Math.max(1, Math.ceil(segmentCount / maxArrows));
+  const arrows: PathArrow[] = [];
+
+  for (let i = 0; i < segmentCount; i += step) {
+    const [lat1, lng1] = positions[i];
+    const [lat2, lng2] = positions[i + 1];
+    if (segmentMeters(lat1, lng1, lat2, lng2) < 8) continue;
+    arrows.push({
+      lat: (lat1 + lat2) / 2,
+      lng: (lng1 + lng2) / 2,
+      bearing: bearingDeg(lat1, lng1, lat2, lng2),
+    });
+  }
+
+  if (arrows.length === 0 && segmentCount > 0) {
+    const [lat1, lng1] = positions[0];
+    const [lat2, lng2] = positions[1];
+    arrows.push({
+      lat: (lat1 + lat2) / 2,
+      lng: (lng1 + lng2) / 2,
+      bearing: bearingDeg(lat1, lng1, lat2, lng2),
+    });
+  }
+
+  return arrows;
+}
+
+function createArrowIcon(bearing: number): L.DivIcon {
+  return L.divIcon({
+    className: "path-arrow-icon",
+    html: `<svg class="path-arrow-svg" width="22" height="22" viewBox="0 0 22 22" style="transform: rotate(${bearing}deg)" aria-hidden="true"><path d="M11 3 L18 17 L11 13 L4 17 Z" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
 }
 
 function PathStats({ path }: { path: DailyPath }) {
@@ -55,12 +136,24 @@ function PathStats({ path }: { path: DailyPath }) {
         : `${Math.round(path.distanceKm * 1000)} m`;
 
   return (
-    <div className="path-stats">
-      <span>{sampleCount} 个路径点</span>
-      <span>行驶约 {distance}</span>
-      <span>
-        {fmtClock(path.startTime)} – {fmtClock(path.endTime)}
-      </span>
+    <div className="path-stats-wrap">
+      <div className="path-direction-bar">
+        <span className="path-direction-end path-direction-start">
+          <span className="path-direction-dot start" aria-hidden="true" />
+          起点 {fmtClock(path.startTime)}
+        </span>
+        <span className="path-direction-arrow" aria-hidden="true">
+          →
+        </span>
+        <span className="path-direction-end path-direction-endpoint">
+          <span className="path-direction-dot end" aria-hidden="true" />
+          终点 {fmtClock(path.endTime)}
+        </span>
+      </div>
+      <div className="path-stats">
+        <span>{sampleCount} 个路径点</span>
+        <span>行驶约 {distance}</span>
+      </div>
     </div>
   );
 }
@@ -82,6 +175,8 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
     if (!activePath) return [];
     return activePath.points.map((p) => [p.lat, p.lng]);
   }, [activePath]);
+
+  const pathArrows = useMemo(() => buildPathArrows(positions), [positions]);
 
   useEffect(() => {
     if (!selectedDay && dailyPaths[0]) {
@@ -157,14 +252,24 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                maxZoom={19}
+                subdomains={["a", "b", "c"]}
               />
-              {positions.length > 0 && <FitBounds positions={positions} />}
+              <MapLayout positions={positions} enabled={open} />
               {activePath && positions.length >= 2 && (
                 <Polyline
                   positions={positions}
                   pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.85 }}
                 />
               )}
+              {pathArrows.map((arrow, i) => (
+                <Marker
+                  key={`arrow-${i}-${arrow.lat}-${arrow.lng}`}
+                  position={[arrow.lat, arrow.lng]}
+                  icon={createArrowIcon(arrow.bearing)}
+                  interactive={false}
+                />
+              ))}
               {activePath?.points.map((p, i) => {
                 const isStart = i === 0;
                 const isEnd = i === activePath.points.length - 1;
