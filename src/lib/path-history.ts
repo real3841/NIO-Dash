@@ -43,7 +43,7 @@ export function simplifyPathPoints(points: VehicleSnapshot[]): VehicleSnapshot[]
     }
   }
 
-  return out.length >= 2 ? out : sorted;
+  return out;
 }
 
 export function pathDistanceKm(points: VehicleSnapshot[]): number {

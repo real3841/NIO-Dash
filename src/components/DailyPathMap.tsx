@@ -179,10 +179,14 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
   const pathArrows = useMemo(() => buildPathArrows(positions), [positions]);
 
   useEffect(() => {
-    if (!selectedDay && dailyPaths[0]) {
-      setSelectedDay(dailyPaths[0].day);
-    }
-  }, [dailyPaths, selectedDay]);
+    if (dailyPaths.length === 0) return;
+    const latest = dailyPaths[0].day;
+    setSelectedDay((prev) => {
+      if (!prev) return latest;
+      if (!dailyPaths.some((p) => p.day === prev)) return latest;
+      return prev;
+    });
+  }, [dailyPaths]);
 
   const summaryMeta =
     dailyPaths.length === 0
@@ -277,7 +281,7 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
                 const radius = isStart || isEnd ? 7 : 4;
                 return (
                   <CircleMarker
-                    key={p.ts}
+                    key={`${p.ts}-${i}`}
                     center={[p.lat, p.lng]}
                     radius={radius}
                     pathOptions={{ color, fillColor: color, fillOpacity: 0.9, weight: 2 }}

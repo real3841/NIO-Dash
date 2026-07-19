@@ -26,6 +26,20 @@ export function isDaytime(now = new Date()): boolean {
   return minutes >= 9 * 60 && minutes <= 17 * 60;
 }
 
+/** 蔚来 vehicle_state：1 = 行驶中 */
+export function isDrivingVehicleState(vehicleState: number | null): boolean {
+  return vehicleState === 1;
+}
+
+/** 行驶中不论几点都用行驶间隔；非行驶才按白天/夜间 */
+export function vehiclePollReason(
+  vehicleState: number | null,
+  now = new Date(),
+): "driving" | "day" | "night" {
+  if (isDrivingVehicleState(vehicleState)) return "driving";
+  return isDaytime(now) ? "day" : "night";
+}
+
 export function readVehicleState(dataDir: string): number | null {
   try {
     const file = path.join(dataDir, "vehicle.json");
@@ -38,14 +52,6 @@ export function readVehicleState(dataDir: string): number | null {
   } catch {
     return null;
   }
-}
-
-export function vehiclePollReason(
-  vehicleState: number | null,
-  now = new Date(),
-): "driving" | "day" | "night" {
-  if (vehicleState === 1) return "driving";
-  return isDaytime(now) ? "day" : "night";
 }
 
 export function getVehiclePollInfo(

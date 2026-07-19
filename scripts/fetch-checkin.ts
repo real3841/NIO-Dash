@@ -95,7 +95,9 @@ export async function runCheckinIfDue(now = new Date()): Promise<boolean> {
 }
 
 export function startDailyCheckinScheduler(onComplete?: () => void): CheckinScheduler {
-  return startCheckinScheduler(() => runCheckinIfDue(), onComplete);
+  return startCheckinScheduler(async () => {
+    await runCheckinIfDue();
+  }, onComplete);
 }
 
 if (isDirectCliInvocation("fetch-checkin.ts")) {

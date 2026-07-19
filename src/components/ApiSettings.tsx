@@ -15,8 +15,14 @@ import {
   type VehicleEnv,
 } from "../lib/env-config";
 import { fmtTime } from "../lib/vehicle";
-import { parsePollSec } from "../lib/poll-schedule";
-import type { VehiclePollEnv } from "../lib/poll-schedule";
+import {
+  getVehiclePollIntervals,
+  isVehiclePollKey,
+  normalizeVehiclePollEnv,
+  parsePollSec,
+  type VehiclePollEnv,
+  type VehiclePollIntervals,
+} from "../lib/poll-schedule";
 import {
   isChangeApiConfigured,
   isCheckinApiConfigured,
@@ -36,6 +42,7 @@ interface ApiSettingsProps {
   loadingTarget: SyncTarget | null;
   lastSyncVehicle: number | null;
   lastSyncChange: number | null;
+  lastSyncCheckin?: number | null;
   vehicleMeta: FetchMeta | null;
   changeMeta: FetchMeta | null;
   checkinMeta?: FetchMeta | null;
@@ -43,6 +50,8 @@ interface ApiSettingsProps {
   errorVehicle: string | null;
   errorChange: string | null;
   vehiclePollSec?: number;
+  vehiclePollReasonLabel?: string;
+  vehiclePollConfigured?: VehiclePollIntervals;
   changePollSec?: number;
   onPollConfigLoaded: (vehicleEnv: VehiclePollEnv, changeSec: number) => void;
 }
@@ -58,6 +67,7 @@ export function ApiSettings({
   loadingTarget,
   lastSyncVehicle,
   lastSyncChange,
+  lastSyncCheckin,
   vehicleMeta,
   changeMeta,
   checkinMeta,
@@ -65,6 +75,8 @@ export function ApiSettings({
   errorVehicle,
   errorChange,
   vehiclePollSec,
+  vehiclePollReasonLabel,
+  vehiclePollConfigured,
   changePollSec,
   onPollConfigLoaded,
 }: ApiSettingsProps) {
@@ -80,18 +92,22 @@ export function ApiSettings({
   const [configError, setConfigError] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
 
+  const syncPollConfig = (vehicle: VehicleEnv, changeInterval: string) => {
+    onPollConfigLoaded(
+      normalizeVehiclePollEnv(vehicle),
+      parsePollSec(changeInterval, 3600),
+    );
+  };
+
   const loadConfig = async () => {
     setLoadingConfig(true);
     setConfigError(null);
     try {
       const cfg = await fetchEnvConfig();
       setEnvConfig(cfg);
-      const vehicle = {
+      const vehicle: VehicleEnv = {
         ...cfg.vehicle,
-        NIO_VEHICLE_POLL_DRIVING_SEC:
-          cfg.vehicle.NIO_VEHICLE_POLL_DRIVING_SEC || "900",
-        NIO_VEHICLE_POLL_DAY_SEC: cfg.vehicle.NIO_VEHICLE_POLL_DAY_SEC || "1800",
-        NIO_VEHICLE_POLL_NIGHT_SEC: cfg.vehicle.NIO_VEHICLE_POLL_NIGHT_SEC || "3600",
+        ...normalizeVehiclePollEnv(cfg.vehicle),
       };
       const change = {
         ...cfg.change,
@@ -102,7 +118,7 @@ export function ApiSettings({
       };
       setVehicleDraft(vehicle);
       setChangeDraft(change);
-      onPollConfigLoaded(vehicle, parsePollSec(change.NIO_CHANGE_POLL_INTERVAL, 3600));
+      syncPollConfig(vehicle, change.NIO_CHANGE_POLL_INTERVAL);
     } catch (err) {
       setConfigError(err instanceof Error ? err.message : "无法加载配置");
     } finally {
@@ -126,6 +142,10 @@ export function ApiSettings({
     setSavingVehicle(true);
     setSaveMsgVehicle(null);
     try {
+      syncPollConfig(
+        vehicleDraft,
+        changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? "3600",
+      );
       await saveVehicleEnv(vehicleDraft);
       setSaveMsgVehicle("配置已保存，车辆拉取计划已更新");
       await loadConfig();
@@ -164,6 +184,21 @@ export function ApiSettings({
     checkinMeta,
     isCheckinApiConfigured(vehicleDraft),
   );
+
+  const pollIntervals =
+    vehiclePollConfigured ??
+    (vehicleDraft ? getVehiclePollIntervals(vehicleDraft) : null);
+
+  const handleVehiclePollChange = (key: string, value: string) => {
+    setVehicleDraft((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [key]: value };
+      if (isVehiclePollKey(key)) {
+        syncPollConfig(next, changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? "3600");
+      }
+      return next;
+    });
+  };
 
   return (
     <section className="panel api-panel">
@@ -251,14 +286,12 @@ export function ApiSettings({
                 <EnvConfigForm
                   fields={VEHICLE_POLL_FIELDS}
                   values={vehicleDraft as unknown as Record<string, string>}
-                  onChange={(key, value) =>
-                    setVehicleDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
-                  }
+                  onChange={handleVehiclePollChange}
                   disabled={loadingConfig || savingVehicle}
                 />
               </details>
               <p className="muted api-hint">
-                根据车辆状态与时段自动选择拉取间隔：行驶中优先，否则按白天 09:00–17:00 / 夜间区分
+                行驶中（vehicle_state=1）不论几点均用「行驶中」间隔；驻车/充电/换电等非行驶状态才按白天 09:00–17:00 / 夜间区分
               </p>
               <div className="row">
                 <button type="submit" className="btn secondary" disabled={savingVehicle}>
@@ -350,7 +383,12 @@ export function ApiSettings({
               : "暂无签到数据"}
           </p>
           <p className="muted sync-block-meta">
-            页面读取{lastSyncVehicle ? ` · ${fmtTime(lastSyncVehicle)}` : " · —"}
+            页面读取
+            {lastSyncCheckin
+              ? ` · ${fmtTime(lastSyncCheckin)}`
+              : checkinMeta?.at
+                ? ` · ${fmtTime(checkinMeta.at)}`
+                : " · —"}
           </p>
           {configOpen === "checkin" && vehicleDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveVehicle}>
@@ -381,8 +419,18 @@ export function ApiSettings({
 
       <div className="sync-meta">
         <span>
-          页面重读 JSON：车辆约每 {vehiclePollSec ?? "—"}s（随行驶/白天/夜间变化） · 换电每{" "}
-          {changePollSec ?? (changeDraft ? parsePollSec(changeDraft.NIO_CHANGE_POLL_INTERVAL, 3600) : "—")}s
+          {pollIntervals ? (
+            <>
+              已配置：行驶 {pollIntervals.driving}s · 白天 {pollIntervals.day}s · 夜间{" "}
+              {pollIntervals.night}s · 当前「{vehiclePollReasonLabel ?? "—"}」页面每{" "}
+              {vehiclePollSec ?? "—"}s 重读 JSON
+            </>
+          ) : (
+            <>
+              页面重读 JSON：当前「{vehiclePollReasonLabel ?? "—"}」约每 {vehiclePollSec ?? "—"}s
+            </>
+          )}
+          {" · "}换电每 {changePollSec ?? (changeDraft ? parsePollSec(changeDraft.NIO_CHANGE_POLL_INTERVAL, 3600) : "—")}s
         </span>
         <button
           type="button"

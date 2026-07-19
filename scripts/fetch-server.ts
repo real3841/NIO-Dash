@@ -4,46 +4,50 @@ import { runVehicleOnce } from "./fetch-vehicle.js";
 
 export type FetchSlot = "all" | "vehicle" | "change";
 
-let runningAll: Promise<void> | null = null;
 let runningVehicle: Promise<void> | null = null;
 let runningChange: Promise<void> | null = null;
 
-export async function runBothOnce(): Promise<void> {
-  await runVehicleOnce();
-  await runChangeOnce();
-}
-
-export function withLock(slot: FetchSlot, task: () => Promise<void>): Promise<void> {
-  const pick = () => {
-    if (slot === "all") return runningAll;
-    if (slot === "vehicle") return runningVehicle;
-    return runningChange;
-  };
-  const set = (p: Promise<void> | null) => {
-    if (slot === "all") runningAll = p;
-    else if (slot === "vehicle") runningVehicle = p;
-    else runningChange = p;
-  };
-
-  const current = pick();
-  if (current) return current;
-
-  const job = task().finally(() => set(null));
-  set(job);
+function withVehicleLock(task: () => Promise<void>): Promise<void> {
+  if (runningVehicle) return runningVehicle;
+  const job = task().finally(() => {
+    runningVehicle = null;
+  });
+  runningVehicle = job;
   return job;
 }
 
+function withChangeLock(task: () => Promise<void>): Promise<void> {
+  if (runningChange) return runningChange;
+  const job = task().finally(() => {
+    runningChange = null;
+  });
+  runningChange = job;
+  return job;
+}
+
+export async function runBothOnce(): Promise<void> {
+  await withVehicleLock(runVehicleOnce);
+  await withChangeLock(runChangeOnce);
+}
+
+export function withLock(slot: FetchSlot, task: () => Promise<void>): Promise<void> {
+  if (slot === "change") return withChangeLock(task);
+  return withVehicleLock(task);
+}
+
 export function triggerFetch(slot: FetchSlot): Promise<void> {
-  const task =
-    slot === "all" ? runBothOnce : slot === "vehicle" ? runVehicleOnce : runChangeOnce;
-  return withLock(slot, task);
+  if (slot === "all") return runBothOnce();
+  if (slot === "vehicle") return withVehicleLock(runVehicleOnce);
+  return withChangeLock(runChangeOnce);
 }
 
 export function isFetchRunning(): { all: boolean; vehicle: boolean; change: boolean } {
+  const vehicle = Boolean(runningVehicle);
+  const change = Boolean(runningChange);
   return {
-    all: Boolean(runningAll),
-    vehicle: Boolean(runningVehicle),
-    change: Boolean(runningChange),
+    all: vehicle || change,
+    vehicle,
+    change,
   };
 }
 
@@ -104,7 +108,7 @@ function startSlotScheduler(
     const label = slot === "vehicle" ? "车辆" : "换电";
     appendFetchLog(slot, "info", `${label} · 开始拉取…`);
     try {
-      await withLock(slot, runOnce);
+      await (slot === "vehicle" ? withVehicleLock(runOnce) : withChangeLock(runOnce));
       onComplete?.();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

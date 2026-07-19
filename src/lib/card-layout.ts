@@ -101,7 +101,10 @@ function readAll(): Partial<Record<CardSection, CardLayoutState>> {
   return readFromLocalStorage();
 }
 
+let lastLocalSaveAt = 0;
+
 async function persistCardLayout(data: Record<CardSection, CardLayoutState>): Promise<void> {
+  lastLocalSaveAt = Date.now();
   memoryCache = data;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -128,13 +131,14 @@ function writeAll(data: Record<CardSection, CardLayoutState>): void {
 
 /** 从服务端文件加载布局（Electron 每次端口不同，localStorage 会丢） */
 export async function hydrateCardLayout(): Promise<void> {
+  const hydrateStartedAt = Date.now();
   try {
     const res = await fetch(`/api/card-layout?_=${Date.now()}`);
     if (res.ok) {
       const data = (await res.json()) as Partial<Record<CardSection, CardLayoutState>>;
       if (data && typeof data === "object" && !Array.isArray(data)) {
         const hasContent = Boolean(data.vehicle || data.orders);
-        if (hasContent) {
+        if (hasContent && lastLocalSaveAt < hydrateStartedAt) {
           memoryCache = data;
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));

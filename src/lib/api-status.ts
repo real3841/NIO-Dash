@@ -24,25 +24,46 @@ export function apiStatusLabel(status: ApiConfigStatus): string {
   }
 }
 
+function str(values: Record<string, string>, ...keys: string[]): string {
+  for (const key of keys) {
+    const v = values[key]?.trim();
+    if (v) return v;
+  }
+  return "";
+}
+
 export function isVehicleApiConfigured(values: Record<string, string> | null | undefined): boolean {
   if (!values) return false;
-  return Boolean(
-    values.NIO_VEHICLE_API_URL?.trim() ||
-      values.NIO_VEHICLE_ACCESS_TOKEN?.trim(),
-  );
+  if (
+    str(values, "NIO_VEHICLE_API_URL", "NIO_API_URL") ||
+    str(values, "NIO_VEHICLE_ACCESS_TOKEN", "NIO_ACCESS_TOKEN")
+  ) {
+    return true;
+  }
+  const mode = str(values, "NIO_VEHICLE_API_MODE", "NIO_API_MODE").toLowerCase();
+  if (mode === "widget") return true;
+  const vehicleId = str(values, "NIO_VEHICLE_ID", "NIO_ID");
+  const deviceId = str(values, "NIO_VEHICLE_DEVICE_ID", "NIO_DEVICE_ID");
+  return Boolean(vehicleId && deviceId);
 }
 
 export function isChangeApiConfigured(values: Record<string, string> | null | undefined): boolean {
   if (!values) return false;
   return Boolean(
-    values.NIO_CHANGE_API_URL?.trim() ||
-      values.NIO_CHANGE_ACCESS_TOKEN?.trim(),
+    str(values, "NIO_CHANGE_API_URL") ||
+      str(values, "NIO_CHANGE_ACCESS_TOKEN") ||
+      values.NIO_CHANGE_API_MODE === "params" ||
+      values.NIO_CHANGE_HASH_TYPE?.trim(),
   );
 }
 
 export function isCheckinApiConfigured(values: Record<string, string> | null | undefined): boolean {
   if (!values) return false;
-  return Boolean(values.NIO_CHECKIN_API_URL?.trim());
+  return Boolean(
+    str(values, "NIO_CHECKIN_API_URL") ||
+      str(values, "NIO_CHECKIN_ACCESS_TOKEN") ||
+      str(values, "NIO_VEHICLE_ACCESS_TOKEN", "NIO_ACCESS_TOKEN"),
+  );
 }
 
 export function apiStatusDetail(

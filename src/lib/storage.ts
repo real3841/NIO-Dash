@@ -2,7 +2,7 @@ import type { ChangeResponse } from "./change";
 import type { CheckinData } from "./checkin";
 import { normalizeCheckinData } from "./checkin";
 import type { VehicleResponse, VehicleSnapshot } from "./vehicle";
-import { isUsableVehicleResponse, normalizeVehicleResponse } from "./vehicle";
+import { extractVehicleStatus, isUsableVehicleResponse, normalizeVehicleResponse, parseSnapshotHistory } from "./vehicle";
 import fallbackChange from "../../data/change.json";
 import fallbackVehicle from "../../data/vehicle.json";
 
@@ -51,7 +51,12 @@ export function saveHistory(history: VehicleSnapshot[]): void {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
 }
 
-export async function fetchVehicleData(): Promise<VehicleResponse> {
+export interface VehicleDataResult {
+  source: "live" | "fallback";
+  data: VehicleResponse;
+}
+
+export async function fetchVehicleData(): Promise<VehicleDataResult> {
   try {
     const res = await fetch(`/data/vehicle.json?_=${Date.now()}`);
     if (!res.ok) {
@@ -61,14 +66,26 @@ export async function fetchVehicleData(): Promise<VehicleResponse> {
     if (!isUsableVehicleResponse(normalized)) {
       throw new Error("vehicle.json 缺少有效车况 data.status");
     }
-    return normalized;
+    return { source: "live", data: normalized };
   } catch (err) {
     console.warn("[dashboard] 使用内置 fallback 数据:", err);
-    const fallback = normalizeVehicleResponse(fallbackVehicle as VehicleResponse);
+    const fallback = normalizeVehicleResponse(fallbackVehicle as unknown as VehicleResponse);
     if (!isUsableVehicleResponse(fallback)) {
       throw new Error("内置 fallback 车辆数据无效");
     }
-    return fallback;
+    return { source: "fallback", data: fallback };
+  }
+}
+
+export async function peekVehicleState(): Promise<number | null> {
+  try {
+    const res = await fetch(`/data/vehicle.json?_=${Date.now()}`);
+    if (!res.ok) return null;
+    const payload = normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
+    if (!isUsableVehicleResponse(payload)) return null;
+    return extractVehicleStatus(payload)?.exterior_status.vehicle_state ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -76,7 +93,8 @@ export async function fetchServerHistory(): Promise<VehicleSnapshot[] | null> {
   try {
     const res = await fetch(`/data/history.json?_=${Date.now()}`);
     if (!res.ok) return null;
-    return readJsonResponse<VehicleSnapshot[]>(res, "history.json");
+    const raw = await readJsonResponse<unknown>(res, "history.json");
+    return parseSnapshotHistory(raw);
   } catch {
     return null;
   }

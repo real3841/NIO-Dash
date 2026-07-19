@@ -14,9 +14,11 @@ import {
 import { reverseGeocodeCached } from "./lib/geocode-cache";
 import { hydrateCardLayout } from "./lib/card-layout";
 import {
-  getVehiclePollIntervalSec,
+  getVehiclePollInfo,
+  normalizeVehiclePollEnv,
   parsePollSec,
   type VehiclePollEnv,
+  type VehiclePollIntervals,
 } from "./lib/poll-schedule";
 import {
   loadFetchMeta,
@@ -30,6 +32,7 @@ import {
   triggerServerFetchVehicle,
   fetchVehicleData,
   loadHistory,
+  peekVehicleState,
   saveHistory,
   type FetchMeta,
 } from "./lib/storage";
@@ -49,13 +52,21 @@ const DailyPathMap = lazy(() =>
 );
 
 const VISIBILITY_API_MIN_MS = 5 * 60 * 1000;
+const FETCH_META_STALE_MS = 90 * 1000;
+const POLL_BOUNDARY_CHECK_MS = 60 * 1000;
 
 function updateVehiclePollInterval(
   env: VehiclePollEnv,
   vehicleState: number | null,
   setter: (sec: number) => void,
+  reasonSetter?: (label: string) => void,
+  configuredSetter?: (intervals: VehiclePollIntervals) => void,
 ): void {
-  setter(getVehiclePollIntervalSec(env, vehicleState));
+  const normalized = normalizeVehiclePollEnv(env);
+  const info = getVehiclePollInfo(normalized, vehicleState);
+  setter(info.intervalSec);
+  reasonSetter?.(info.reasonLabel);
+  configuredSetter?.(info.intervals);
 }
 
 export default function App() {
@@ -63,9 +74,11 @@ export default function App() {
   const [history, setHistory] = useState<VehicleSnapshot[]>(() => loadHistory());
   const [loadingTarget, setLoadingTarget] = useState<SyncTarget | null>(null);
   const [errorVehicle, setErrorVehicle] = useState<string | null>(null);
+  const [warningVehicle, setWarningVehicle] = useState<string | null>(null);
   const [errorChange, setErrorChange] = useState<string | null>(null);
   const [lastSyncVehicle, setLastSyncVehicle] = useState<number | null>(null);
   const [lastSyncChange, setLastSyncChange] = useState<number | null>(null);
+  const [lastSyncCheckin, setLastSyncCheckin] = useState<number | null>(null);
   const [vehicleMeta, setVehicleMeta] = useState<FetchMeta | null>(null);
   const [changeMeta, setChangeMeta] = useState<FetchMeta | null>(null);
   const [address, setAddress] = useState<string | null>(null);
@@ -76,13 +89,21 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("setup") === "1",
   );
   const [vehiclePollSec, setVehiclePollSec] = useState(900);
+  const [vehiclePollReasonLabel, setVehiclePollReasonLabel] = useState("白天");
+  const [vehiclePollConfigured, setVehiclePollConfigured] = useState<VehiclePollIntervals>({
+    driving: 900,
+    day: 1800,
+    night: 3600,
+  });
   const [changePollSec, setChangePollSec] = useState(3600);
   const [trendOpen, setTrendOpen] = useState(() => loadDrawerOpen(TREND_DRAWER_KEY, false));
 
   const pollEnvRef = useRef<VehiclePollEnv | null>(null);
+  const vehicleStateRef = useRef<number | null>(null);
   const lastCoordsRef = useRef<string | null>(null);
   const lastApiTriggerRef = useRef(0);
   const initialFetchDone = useRef(false);
+  const refreshDepthRef = useRef(0);
 
   useEffect(() => {
     void hydrateCardLayout();
@@ -91,17 +112,46 @@ export default function App() {
   useEffect(() => {
     void fetchEnvConfig()
       .then((cfg) => {
-        pollEnvRef.current = cfg.vehicle;
+        pollEnvRef.current = normalizeVehiclePollEnv(cfg.vehicle);
         setChangePollSec(
           parsePollSec(
             cfg.change.NIO_CHANGE_POLL_INTERVAL || cfg.general.NIO_POLL_INTERVAL,
             3600,
           ),
         );
-        updateVehiclePollInterval(cfg.vehicle, null, setVehiclePollSec);
+        updateVehiclePollInterval(
+          cfg.vehicle,
+          null,
+          setVehiclePollSec,
+          setVehiclePollReasonLabel,
+          setVehiclePollConfigured,
+        );
       })
       .catch(() => {});
   }, []);
+
+  const syncVehiclePollInterval = useCallback(async () => {
+    if (!pollEnvRef.current) return;
+
+    const peeked = await peekVehicleState();
+    if (peeked !== null) {
+      vehicleStateRef.current = peeked;
+    }
+
+    const state = vehicleStateRef.current;
+    const normalized = normalizeVehiclePollEnv(pollEnvRef.current);
+    setVehiclePollSec((prev) => {
+      const info = getVehiclePollInfo(normalized, state);
+      setVehiclePollReasonLabel(info.reasonLabel);
+      setVehiclePollConfigured(info.intervals);
+      return info.intervalSec === prev ? prev : info.intervalSec;
+    });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void syncVehiclePollInterval(), POLL_BOUNDARY_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [syncVehiclePollInterval]);
 
   const refreshCheckin = useCallback(async () => {
     const [checkin, checkinMetaResult] = await Promise.all([
@@ -110,9 +160,10 @@ export default function App() {
     ]);
     setCheckinData(checkin);
     setCheckinMeta(checkinMetaResult);
+    setLastSyncCheckin(Date.now());
   }, []);
 
-  const refreshVehicle = useCallback(async (triggerFetch: boolean) => {
+  const refreshVehicle = useCallback(async (triggerFetch: boolean, skipCheckin = false) => {
     let triggerError: string | null = null;
     if (triggerFetch) {
       try {
@@ -123,13 +174,34 @@ export default function App() {
       }
     }
 
-    const [payload, serverHistory, meta, checkin, checkinMetaResult] = await Promise.all([
+    const fetches: [
+      ReturnType<typeof fetchVehicleData>,
+      ReturnType<typeof fetchServerHistory>,
+      ReturnType<typeof loadFetchMeta>,
+      ReturnType<typeof fetchCheckinData> | null,
+      ReturnType<typeof loadCheckinFetchMeta> | null,
+    ] = [
       fetchVehicleData(),
       fetchServerHistory(),
       loadFetchMeta(),
-      fetchCheckinData(),
-      loadCheckinFetchMeta(),
+      skipCheckin ? null : fetchCheckinData(),
+      skipCheckin ? null : loadCheckinFetchMeta(),
+    ];
+
+    const [vehicleResult, serverHistory, meta, checkin, checkinMetaResult] = await Promise.all([
+      fetches[0],
+      fetches[1],
+      fetches[2],
+      fetches[3] ?? Promise.resolve(null),
+      fetches[4] ?? Promise.resolve(null),
     ]);
+
+    const payload = vehicleResult.data;
+    if (vehicleResult.source === "fallback") {
+      setWarningVehicle("无法读取 /data/vehicle.json，当前显示内置演示数据（非真实车况）");
+    } else {
+      setWarningVehicle(null);
+    }
 
     if (!isUsableVehicleResponse(payload)) {
       setErrorVehicle("vehicle.json 缺少有效车况，请检查 Token 或在「数据同步」中刷新");
@@ -138,14 +210,24 @@ export default function App() {
 
     setData(payload);
     setVehicleMeta(meta);
-    setCheckinData(checkin);
-    setCheckinMeta(checkinMetaResult);
+    if (!skipCheckin) {
+      setCheckinData(checkin);
+      setCheckinMeta(checkinMetaResult);
+      setLastSyncCheckin(Date.now());
+    }
     setLastSyncVehicle(Date.now());
 
     const status = extractVehicleStatus(payload);
     const vehicleState = status?.exterior_status.vehicle_state ?? null;
+    vehicleStateRef.current = vehicleState;
     if (pollEnvRef.current) {
-      updateVehiclePollInterval(pollEnvRef.current, vehicleState, setVehiclePollSec);
+      updateVehiclePollInterval(
+        pollEnvRef.current,
+        vehicleState,
+        setVehiclePollSec,
+        setVehiclePollReasonLabel,
+        setVehiclePollConfigured,
+      );
     }
 
     const snap = snapshotFromResponse(payload);
@@ -175,7 +257,7 @@ export default function App() {
     }
   }, []);
 
-  const refreshChange = useCallback(async (triggerFetch: boolean) => {
+  const refreshChange = useCallback(async (triggerFetch: boolean, skipCheckin = false) => {
     let triggerError: string | null = null;
     if (triggerFetch) {
       try {
@@ -191,7 +273,9 @@ export default function App() {
     }
     setChangeMeta(meta);
     setLastSyncChange(Date.now());
-    await refreshCheckin();
+    if (!skipCheckin) {
+      await refreshCheckin();
+    }
 
     if (triggerError) {
       setErrorChange(`${triggerError}，已回退读取当前 data/change.json`);
@@ -202,7 +286,10 @@ export default function App() {
 
   const refresh = useCallback(
     async (target: SyncTarget, triggerFetch = false) => {
-      setLoadingTarget(target);
+      refreshDepthRef.current += 1;
+      if (refreshDepthRef.current === 1) {
+        setLoadingTarget(target);
+      }
       if (target === "vehicle" || target === "all") setErrorVehicle(null);
       if (target === "change" || target === "all") setErrorChange(null);
 
@@ -218,30 +305,45 @@ export default function App() {
           }
         }
 
-        const tasks: Promise<void>[] = [];
-        if (target === "vehicle" || target === "all") {
-          tasks.push(refreshVehicle(target === "vehicle" && triggerFetch));
+        if (target === "all") {
+          await Promise.all([
+            refreshVehicle(false, true),
+            refreshChange(false, true),
+          ]);
+          await refreshCheckin();
+        } else {
+          const tasks: Promise<void>[] = [];
+          if (target === "vehicle") {
+            tasks.push(refreshVehicle(triggerFetch, false));
+          }
+          if (target === "change") {
+            tasks.push(refreshChange(triggerFetch, false));
+          }
+          await Promise.all(tasks);
         }
-        if (target === "change" || target === "all") {
-          tasks.push(refreshChange(target === "change" && triggerFetch));
-        }
-        await Promise.all(tasks);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "同步失败";
         if (target === "vehicle" || target === "all") setErrorVehicle(msg);
         if (target === "change" || target === "all") setErrorChange(msg);
       } finally {
-        setLoadingTarget(null);
+        refreshDepthRef.current -= 1;
+        if (refreshDepthRef.current === 0) {
+          setLoadingTarget(null);
+        }
       }
     },
-    [refreshChange, refreshVehicle],
+    [refreshChange, refreshCheckin, refreshVehicle],
   );
 
   useEffect(() => {
     void (async () => {
       await Promise.all([refresh("vehicle", false), refresh("change", false)]);
       initialFetchDone.current = true;
-      void refresh("vehicle", true);
+      const meta = await loadFetchMeta();
+      const stale = !meta?.ok || !meta.at || Date.now() - meta.at > FETCH_META_STALE_MS;
+      if (stale) {
+        void refresh("vehicle", true);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -294,17 +396,27 @@ export default function App() {
             loadingTarget={loadingTarget}
             lastSyncVehicle={lastSyncVehicle}
             lastSyncChange={lastSyncChange}
+            lastSyncCheckin={lastSyncCheckin}
             vehicleMeta={vehicleMeta}
             changeMeta={changeMeta}
             errorVehicle={errorVehicle}
             errorChange={errorChange}
             vehiclePollSec={vehiclePollSec}
+            vehiclePollReasonLabel={vehiclePollReasonLabel}
+            vehiclePollConfigured={vehiclePollConfigured}
             changePollSec={changePollSec}
             onPollConfigLoaded={(vehicleEnv, changeSec) => {
-              pollEnvRef.current = vehicleEnv;
+              pollEnvRef.current = normalizeVehiclePollEnv(vehicleEnv);
               setChangePollSec(changeSec);
               const state = data ? extractVehicleStatus(data)?.exterior_status.vehicle_state ?? null : null;
-              updateVehiclePollInterval(vehicleEnv, state, setVehiclePollSec);
+              vehicleStateRef.current = state;
+              updateVehiclePollInterval(
+                vehicleEnv,
+                state,
+                setVehiclePollSec,
+                setVehiclePollReasonLabel,
+                setVehiclePollConfigured,
+              );
             }}
           />
         )}
@@ -326,8 +438,9 @@ export default function App() {
             {changeMeta?.ok && changeMeta.at ? ` · 换电拉取 ${fmtTime(changeMeta.at)}` : ""}
           </p>
           <p className="nas-hint">
-            在「数据同步」填写 Token；车辆按行驶/白天/夜间自动拉取，换电独立定时；菜单栏同步显示电量
+            在「数据同步」填写 Token；行驶中不论时段按行驶间隔拉取，驻车/充电等按白天/夜间；菜单栏同步显示电量
           </p>
+          {warningVehicle && <p className="nas-error">{warningVehicle}</p>}
           {vehicleMeta && !vehicleMeta.ok && (
             <p className="nas-error">车辆拉取失败：{vehicleMeta.error}</p>
           )}
@@ -366,6 +479,7 @@ export default function App() {
           loadingTarget={loadingTarget}
           lastSyncVehicle={lastSyncVehicle}
           lastSyncChange={lastSyncChange}
+          lastSyncCheckin={lastSyncCheckin}
           vehicleMeta={vehicleMeta}
           changeMeta={changeMeta}
           checkinMeta={checkinMeta}
@@ -373,11 +487,20 @@ export default function App() {
           errorVehicle={errorVehicle}
           errorChange={errorChange}
           vehiclePollSec={vehiclePollSec}
+          vehiclePollReasonLabel={vehiclePollReasonLabel}
+          vehiclePollConfigured={vehiclePollConfigured}
           changePollSec={changePollSec}
           onPollConfigLoaded={(vehicleEnv, changeSec) => {
-            pollEnvRef.current = vehicleEnv;
+            pollEnvRef.current = normalizeVehiclePollEnv(vehicleEnv);
             setChangePollSec(changeSec);
-            updateVehiclePollInterval(vehicleEnv, s.exterior_status.vehicle_state, setVehiclePollSec);
+            vehicleStateRef.current = s.exterior_status.vehicle_state;
+            updateVehiclePollInterval(
+              vehicleEnv,
+              s.exterior_status.vehicle_state,
+              setVehiclePollSec,
+              setVehiclePollReasonLabel,
+              setVehiclePollConfigured,
+            );
           }}
         />
       )}

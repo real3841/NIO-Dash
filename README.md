@@ -3,7 +3,7 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.5.1-green)
+![Version](https://img.shields.io/badge/version-1.6.0-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
@@ -33,7 +33,7 @@
 
 | 数据 | 策略 |
 |------|------|
-| **车辆** | 行驶中 / 白天 09:00–17:00 / 夜间 17:01–08:59 三档间隔，可配置 |
+| **车辆** | 行驶中不论时段用「行驶中」间隔；驻车/充电等按白天 09:00–17:00 / 夜间 17:01–08:59，均可配置 |
 | **换电** | 独立定时，默认 60 分钟 |
 | **签到** | 每天 **9:00** 一次；9 点后首次打开补拉；未签到时每 5 分钟重试直至已签 |
 
@@ -74,7 +74,7 @@ DMG 安装镜像：
 npm run electron:pack:dmg
 ```
 
-> 首次打开若被 Gatekeeper 拦截：系统设置 → 隐私与安全性 → 仍要打开。
+> 首次打开若被 Gatekeeper 拦截：在 `.app` 上 **右键 → 打开**。
 
 ### 仅 Web / API 开发（无 Electron）
 
@@ -229,6 +229,14 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run serve:api` | 仅 API 服务 |
 
 ## 更新日志
+
+### v1.6.0
+
+- **拉取间隔**：与「数据同步」配置严格一致；行驶中不论几点均用行驶间隔，非行驶按白天/夜间；修改间隔即时生效
+- **可靠性**：车辆拉取全局锁防并发写 history；refresh 并发 guard；history.json 校验；fallback 数据顶部警告
+- **API 状态**：配置检测与 fetch 脚本对齐（widget / legacy URL / 签到 Token）；签到独立同步时间
+- **每日路径**：跨午夜自动切今天；路径简化与 marker key 修复
+- **其他**：卡片布局 hydrate 竞态修复；启动时避免重复 API 拉取；`refresh("all")` 签到去重
 
 ### v1.5.1
 

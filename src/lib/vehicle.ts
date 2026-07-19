@@ -102,6 +102,36 @@ export function snapshotHistoryKey(s: VehicleSnapshot): string {
   return `${s.ts}:${Math.round(s.lat * 1e4)}:${Math.round(s.lng * 1e4)}`;
 }
 
+export function isValidSnapshot(s: unknown): s is VehicleSnapshot {
+  if (!s || typeof s !== "object") return false;
+  const o = s as VehicleSnapshot;
+  return (
+    Number.isFinite(o.ts) &&
+    Number.isFinite(o.lat) &&
+    Number.isFinite(o.lng) &&
+    isValidGps(o.lat, o.lng)
+  );
+}
+
+/** 解析 history.json；非数组或全无效时返回 null */
+export function parseSnapshotHistory(raw: unknown): VehicleSnapshot[] | null {
+  if (!Array.isArray(raw)) return null;
+  const filtered = raw.filter(isValidSnapshot);
+  return filtered.length > 0 ? filtered : raw.length === 0 ? [] : null;
+}
+
+export function mergeSnapshotHistories(
+  a: VehicleSnapshot[],
+  b: VehicleSnapshot[],
+  maxPoints = HISTORY_MAX_POINTS,
+): VehicleSnapshot[] {
+  const byKey = new Map<string, VehicleSnapshot>();
+  for (const s of [...a, ...b]) {
+    byKey.set(snapshotHistoryKey(s), s);
+  }
+  return [...byKey.values()].sort((x, y) => x.ts - y.ts).slice(-maxPoints);
+}
+
 export function appendSnapshotHistory(
   stored: VehicleSnapshot[],
   current: VehicleSnapshot,
@@ -121,7 +151,11 @@ export function resolveVehicleHistory(
   current: VehicleSnapshot,
 ): { history: VehicleSnapshot[]; persistLocal: boolean } {
   if (serverHistory !== null) {
-    return { history: appendSnapshotHistory(serverHistory, current), persistLocal: false };
+    const base =
+      serverHistory.length > 0 || localHistory.length === 0
+        ? serverHistory
+        : mergeSnapshotHistories(serverHistory, localHistory);
+    return { history: appendSnapshotHistory(base, current), persistLocal: false };
   }
   if (localHistory.length > 0) {
     return { history: appendSnapshotHistory(localHistory, current), persistLocal: true };
