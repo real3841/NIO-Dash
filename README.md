@@ -3,7 +3,7 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.9.2-green)
+![Version](https://img.shields.io/badge/version-1.9.4-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 
@@ -205,7 +205,7 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 - **车况采样时间**：界面显示的 `sample_time` 来自蔚来 API，表示车端上报时刻
 - **历史记录**：每次成功拉取车辆后，按 `soc_status.sample_time` 去重写入 `history.json`
 - **页面刷新**：看板定时重读本地 JSON；后台按行驶/白天/夜间策略调 API
-- **历史趋势**：电量默认近 1 日；日增里程 / 总里程 / 家充默认近 7 或 15 日。家充图是每日充入电量的折线，标题显示所选区间的累计电量。可按自然日筛选，支持缩放与平移
+- **历史趋势**：电量默认近 1 日；日增里程 / 总里程 / 家充默认近 7 或 15 日。家充标题为时长 / 次数 / 电量。点「月」查看整月，并用左右箭头切换有记录的月份
 
 ## 项目结构
 
@@ -234,6 +234,11 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run serve:api` | 仅 API 服务 |
 
 ## 更新日志
+
+### v1.9.4
+
+- **家充图**：标题改为时长 / 次数 / 电量，并保留累计
+- **按月查看**：点「月」显示整月，左右箭头切换有充电记录的月份
 
 ### v1.9.2
 

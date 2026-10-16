@@ -9,7 +9,7 @@ import {
 import type { VehicleSnapshot } from "../lib/vehicle";
 import { fmtTime } from "../lib/vehicle";
 import type { DailyHistory } from "../lib/trip";
-import type { PowerFile } from "../lib/power";
+import { formatDurationSec, type PowerFile } from "../lib/power";
 
 interface TrendChartsProps {
   history: VehicleSnapshot[];
@@ -48,6 +48,12 @@ function presetDateRange(days: number): { start: string; end: string } {
   const end = localDayKey();
   const start = localDayKey(startOfLocalDay() - (days - 1) * 24 * 60 * 60 * 1000);
   return { start, end };
+}
+
+function monthBounds(key: string): { start: string; end: string } {
+  const [y, m] = key.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return { start: `${key}-01`, end: `${key}-${String(last).padStart(2, "0")}` };
 }
 
 function filterForDateRange(
@@ -327,6 +333,9 @@ function MiniChart({
   dailyOverrides,
   dailyPoints,
   rangeSum = false,
+  monthPreset = false,
+  monthTotals,
+  notes = [],
 }: {
   title: string;
   unit: string;
@@ -341,16 +350,24 @@ function MiniChart({
   /** 当日里程接口按天记下的值，有就优先用 */
   dailyOverrides?: DailyHistory;
   /** 按天的独立序列，例如家充每日电量 */
-  dailyPoints?: { day: string; value: number }[];
+  dailyPoints?: { day: string; value: number; times?: number; seconds?: number; kwh?: number }[];
   /** 标题和说明显示区间累计，而不是最后一个点 */
   rangeSum?: boolean;
+  /** 在 7 日 / 15 日右侧增加「月」，按整月查看并可前后翻 */
+  monthPreset?: boolean;
+  /** YYYY-MM → 该月官方汇总，翻月时标题用这份数 */
+  monthTotals?: Record<string, { kwh: number; times: number; seconds: number }>;
+  /** 固定显示的统计，不随日期范围变化 */
+  notes?: string[];
 }) {
   const today = localDayKey();
   const defaultRange = presetDateRange(defaultPreset);
 
-  const [presetDays, setPresetDays] = useState<number | null>(defaultPreset);
+  const [presetDays, setPresetDays] = useState<number | "month" | null>(defaultPreset);
+  const [viewMonth, setViewMonth] = useState<string | null>(null);
   const [startDate, setStartDate] = useState(defaultRange.start);
   const [endDate, setEndDate] = useState(defaultRange.end);
+  const monthKeys = useMemo(() => Object.keys(monthTotals ?? {}).sort(), [monthTotals]);
 
   const byDay = dailyMileage || rangeSum;
 
@@ -398,6 +415,20 @@ function MiniChart({
     () => (dailyMileage || rangeSum ? values.reduce((sum, value) => sum + value, 0) : 0),
     [dailyMileage, rangeSum, values],
   );
+
+  const rangeDetail = useMemo(() => {
+    if (!rangeSum || !dailyPoints) return null;
+    if (presetDays === "month" && viewMonth && monthTotals?.[viewMonth]) {
+      return monthTotals[viewMonth];
+    }
+    const [lo, hi] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+    const rows = dailyPoints.filter((p) => p.day >= lo && p.day <= hi);
+    return {
+      kwh: rows.reduce((sum, row) => sum + (row.kwh ?? row.value), 0),
+      times: rows.reduce((sum, row) => sum + (row.times ?? 0), 0),
+      seconds: rows.reduce((sum, row) => sum + (row.seconds ?? 0), 0),
+    };
+  }, [rangeSum, dailyPoints, presetDays, viewMonth, monthTotals, startDate, endDate]);
 
   const [hovered, setHovered] = useState<number | null>(null);
   const [zoom, setZoom] = useState(ZOOM_MIN);
@@ -522,6 +553,27 @@ function MiniChart({
     setEndDate(range.end);
   };
 
+  const showMonth = (key: string) => {
+    const range = monthBounds(key);
+    setPresetDays("month");
+    setViewMonth(key);
+    setStartDate(range.start);
+    setEndDate(range.end);
+  };
+
+  const applyMonth = () => {
+    const current = today.slice(0, 7);
+    const key = monthKeys.includes(current) ? current : monthKeys[monthKeys.length - 1];
+    if (key) showMonth(key);
+  };
+
+  const stepMonth = (delta: number) => {
+    if (!viewMonth) return;
+    const index = monthKeys.indexOf(viewMonth);
+    const next = monthKeys[index + delta];
+    if (next) showMonth(next);
+  };
+
   const onStartChange = (value: string) => {
     if (!value) return;
     setPresetDays(null);
@@ -538,20 +590,29 @@ function MiniChart({
 
   return (
     <div className="mini-chart">
-      <div className="mini-chart-head">
+      <div className={`mini-chart-head${rangeDetail ? " wrap" : ""}`}>
         <span>{title}</span>
         <strong>
-          {rangeSum
-            ? values.length > 0
-              ? `${totalDelta.toFixed(1)}${unit}`
-              : "—"
-            : dailyMileage
+          {rangeDetail
+            ? `${formatDurationSec(rangeDetail.seconds)} / ${rangeDetail.times} 次 / ${rangeDetail.kwh.toFixed(1)} kWh`
+            : rangeSum
               ? values.length > 0
-                ? `${totalDelta >= 0 ? "+" : ""}${totalDelta} km`
+                ? `${totalDelta.toFixed(1)}${unit}`
                 : "—"
-              : `${last ?? "—"}${unit}`}
+              : dailyMileage
+                ? values.length > 0
+                  ? `${totalDelta >= 0 ? "+" : ""}${totalDelta} km`
+                  : "—"
+                : `${last ?? "—"}${unit}`}
         </strong>
       </div>
+      {notes.length > 0 && (
+        <p className="muted mini-chart-note">
+          {notes.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
+        </p>
+      )}
       <div className="mini-chart-range" role="group" aria-label={`${title}时间范围`}>
         {presetOptions.map((d) => (
           <button
@@ -563,11 +624,42 @@ function MiniChart({
             {d}日
           </button>
         ))}
+        {monthPreset && presetDays === "month" && (
+          <button
+            type="button"
+            className="mini-chart-day-btn"
+            onClick={() => stepMonth(-1)}
+            disabled={monthKeys.indexOf(viewMonth ?? "") <= 0}
+            aria-label="上个月"
+          >
+            ‹
+          </button>
+        )}
+        {monthPreset && (
+          <button
+            type="button"
+            className={`mini-chart-day-btn${presetDays === "month" ? " active" : ""}`}
+            onClick={applyMonth}
+          >
+            月
+          </button>
+        )}
+        {monthPreset && presetDays === "month" && (
+          <button
+            type="button"
+            className="mini-chart-day-btn"
+            onClick={() => stepMonth(1)}
+            disabled={monthKeys.indexOf(viewMonth ?? "") < 0 || monthKeys.indexOf(viewMonth ?? "") >= monthKeys.length - 1}
+            aria-label="下个月"
+          >
+            ›
+          </button>
+        )}
         <input
           type="date"
           className="mini-chart-date-input"
           value={startDate}
-          min={minDate}
+          min={startDate < minDate ? startDate : minDate}
           max={endDate}
           aria-label={`${title}开始日期`}
           title="开始日期"
@@ -579,7 +671,7 @@ function MiniChart({
           className="mini-chart-date-input"
           value={endDate}
           min={startDate}
-          max={today}
+          max={endDate > today ? endDate : today}
           aria-label={`${title}结束日期`}
           title="结束日期"
           onChange={(e) => onEndChange(e.target.value)}
@@ -670,8 +762,20 @@ function MiniChart({
           )}
         </div>
       <div className="mini-chart-labels">
-        <span>{windowLabels.start !== null ? formatWindowLabel(windowLabels.start, byDay) : "—"}</span>
-        <span>{windowLabels.end !== null ? formatWindowLabel(windowLabels.end, byDay) : ""}</span>
+        <span>
+          {presetDays === "month"
+            ? formatDayZh(startDate)
+            : windowLabels.start !== null
+              ? formatWindowLabel(windowLabels.start, byDay)
+              : "—"}
+        </span>
+        <span>
+          {presetDays === "month"
+            ? formatDayZh(endDate)
+            : windowLabels.end !== null
+              ? formatWindowLabel(windowLabels.end, byDay)
+              : ""}
+        </span>
       </div>
       {zoom > ZOOM_MIN && maxPan > minPan && (
         <label className="mini-chart-pan-wrap" title="左右拖动查看">
@@ -760,6 +864,9 @@ export function TrendCharts({ history, dailyHistory, power }: TrendChartsProps) 
         rangeSum
         presetOptions={MILEAGE_PRESET_DAYS}
         defaultPreset={15}
+        monthPreset
+        monthTotals={powerMonthTotals(power)}
+        notes={powerNotes(power)}
         color="#f59e0b"
         history={[]}
         dailyPoints={powerDailyPoints(power)}
@@ -768,12 +875,45 @@ export function TrendCharts({ history, dailyHistory, power }: TrendChartsProps) 
   );
 }
 
-function powerDailyPoints(power?: PowerFile | null): { day: string; value: number }[] {
-  const rows: { day: string; value: number }[] = [];
+function powerNotes(power?: PowerFile | null): string[] {
+  const months = Object.values(power?.months ?? {});
+  if (months.length === 0) return [];
+  let times = 0;
+  let kwh = 0;
+  let sec = 0;
+  for (const month of months) {
+    times += month.total_charging_times;
+    kwh += month.total_real_charge_kwh;
+    sec += month.total_charging_duration;
+  }
+  return [`累计 ${formatDurationSec(sec)} / ${times} 次 / ${kwh.toFixed(1)} kWh`];
+}
+
+function powerMonthTotals(power?: PowerFile | null): Record<string, { kwh: number; times: number; seconds: number }> {
+  const totals: Record<string, { kwh: number; times: number; seconds: number }> = {};
+  for (const [key, month] of Object.entries(power?.months ?? {})) {
+    if (month.total_charging_times <= 0 && month.total_real_charge_kwh <= 0) continue;
+    totals[key] = {
+      kwh: month.total_real_charge_kwh,
+      times: month.total_charging_times,
+      seconds: month.total_charging_duration,
+    };
+  }
+  return totals;
+}
+
+function powerDailyPoints(power?: PowerFile | null): { day: string; value: number; times: number; seconds: number; kwh: number }[] {
+  const rows: { day: string; value: number; times: number; seconds: number; kwh: number }[] = [];
   for (const month of Object.values(power?.months ?? {})) {
     for (const report of month.reports) {
       if (!report.date) continue;
-      rows.push({ day: report.date, value: Math.round(report.real_charge_kwh * 10) / 10 });
+      rows.push({
+        day: report.date,
+        value: Math.round(report.real_charge_kwh * 10) / 10,
+        times: report.charging_times,
+        seconds: report.charging_duration,
+        kwh: report.real_charge_kwh,
+      });
     }
   }
   rows.sort((a, b) => a.day.localeCompare(b.day));
