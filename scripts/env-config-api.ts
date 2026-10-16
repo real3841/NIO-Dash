@@ -4,6 +4,7 @@ import {
   CHANGE_ENV_KEYS,
   getEnvFilePath,
   loadEnvSections,
+  MAP_ENV_KEYS,
   saveEnvSection,
   TRAY_ENV_KEYS,
   VEHICLE_ENV_KEYS,
@@ -56,7 +57,13 @@ export async function handleConfigRequest(
     return true;
   }
 
-  if ((pathname === "/config/vehicle" || pathname === "/config/change" || pathname === "/config/tray") && method === "PUT") {
+  if (
+    (pathname === "/config/vehicle" ||
+      pathname === "/config/change" ||
+      pathname === "/config/tray" ||
+      pathname === "/config/map") &&
+    method === "PUT"
+  ) {
     try {
       const raw = await readBody(req);
       const body = JSON.parse(raw) as Record<string, string>;
@@ -65,7 +72,9 @@ export async function handleConfigRequest(
           ? VEHICLE_ENV_KEYS
           : pathname === "/config/change"
             ? CHANGE_ENV_KEYS
-            : TRAY_ENV_KEYS;
+            : pathname === "/config/map"
+              ? MAP_ENV_KEYS
+              : TRAY_ENV_KEYS;
       const updates = pickSectionUpdates(keys, body);
       if (Object.keys(updates).length === 0) {
         json(res, 400, { ok: false, error: "没有可更新的字段" });

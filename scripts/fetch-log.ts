@@ -3,7 +3,7 @@ import path from "node:path";
 import { writeFileAtomic } from "./atomic-write.js";
 import { getFetchLogFile } from "./paths.js";
 
-export type FetchLogSlot = "vehicle" | "change" | "checkin" | "system";
+export type FetchLogSlot = "vehicle" | "change" | "checkin" | "stock_watch" | "system";
 export type FetchLogLevel = "info" | "success" | "error";
 
 export interface FetchLogEntry {
@@ -30,12 +30,14 @@ export interface FetchLogSnapshot {
     vehicle: SlotScheduleState;
     change: SlotScheduleState;
     checkin: SlotScheduleState;
+    stock_watch: SlotScheduleState;
   };
   running: {
     all: boolean;
     vehicle: boolean;
     change: boolean;
     checkin: boolean;
+    stock_watch: boolean;
   };
   logs: FetchLogEntry[];
 }
@@ -72,13 +74,15 @@ function schedulePersistLogs(): void {
 
 const logs: FetchLogEntry[] = loadPersistedLogs();
 
-const schedule: Record<"vehicle" | "change" | "checkin", SlotScheduleState> = {
+const schedule: Record<"vehicle" | "change" | "checkin" | "stock_watch", SlotScheduleState> = {
   vehicle: { nextAt: null, intervalSec: null, detail: null },
   change: { nextAt: null, intervalSec: null, detail: null },
   checkin: { nextAt: null, intervalSec: null, detail: null },
+  stock_watch: { nextAt: null, intervalSec: null, detail: null },
 };
 
 let checkinRunning = false;
+let stockWatchRunning = false;
 
 const SENSITIVE_KEY = /token|authorization|password|secret|cookie|bearer/i;
 const MAX_RAW_JSON_CHARS = 800_000;
@@ -207,6 +211,9 @@ export function inferFetchFailureHint(message: string, slot: FetchLogSlot): stri
   if (slot === "change" && /html|json/.test(m)) {
     return "换电接口返回非 JSON，请检查换电 URL、Header 与 sign 参数";
   }
+  if (slot === "change" && /用户名不能为空/.test(message)) {
+    return "换电 Token 可能过期或与车辆 Token 不一致：请清空换电 Token 以沿用车辆 Token，或粘贴最新 Token 后保存";
+  }
   if (slot === "checkin" && /未配置/.test(message)) {
     return "请在配置中填写签到 Token（NIO_CHECKIN_ACCESS_TOKEN）";
   }
@@ -214,7 +221,7 @@ export function inferFetchFailureHint(message: string, slot: FetchLogSlot): stri
 }
 
 export function setSlotSchedule(
-  slot: "vehicle" | "change" | "checkin",
+  slot: "vehicle" | "change" | "checkin" | "stock_watch",
   patch: Partial<SlotScheduleState>,
 ): void {
   schedule[slot] = { ...schedule[slot], ...patch };
@@ -222,6 +229,14 @@ export function setSlotSchedule(
 
 export function setCheckinRunning(running: boolean): void {
   checkinRunning = running;
+}
+
+export function setStockWatchRunning(running: boolean): void {
+  stockWatchRunning = running;
+}
+
+export function isStockWatchRunning(): boolean {
+  return stockWatchRunning;
 }
 
 export function getFetchLogSnapshot(running: {
@@ -238,10 +253,13 @@ export function getFetchLogSnapshot(running: {
       vehicle: { ...schedule.vehicle },
       change: { ...schedule.change },
       checkin: { ...schedule.checkin },
+      stock_watch: { ...schedule.stock_watch },
     },
     running: {
       ...running,
+      all: running.all || stockWatchRunning,
       checkin: checkinRunning,
+      stock_watch: stockWatchRunning,
     },
     logs: [...logs].reverse(),
   };

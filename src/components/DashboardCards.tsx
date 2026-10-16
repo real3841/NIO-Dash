@@ -28,10 +28,13 @@ import {
 import {
   batteryPackLabel,
   chargeStateLabel,
+  fotaDownloadPercent,
   fmtTime,
   extractVehicleStatus,
+  isFotaUpdating,
   formatVehicleId,
   fullChargeRangeKm,
+  isValidGps,
   heatLevelLabel,
   mapsUrl,
   modeActive,
@@ -55,6 +58,10 @@ import {
 import { VEHICLE_CARDS, cardLabel, toggleCardVisibility } from "../lib/card-layout";
 import type { CheckinData } from "../lib/checkin";
 import { getCardRvsPayload } from "../lib/card-rvs-data";
+import { stockStatusTone, type StockWatchState } from "../lib/stock-watch";
+import { placeLabel, tripTimeMs, type DailyFile, type JourneyFile } from "../lib/trip";
+import { formatDurationSec, NIO_SITE_CERT, NIO_SITE_CERT_NOT_AFTER, workStateLabel, type PowerFile } from "../lib/power";
+import { localDayKey } from "../lib/date-utils";
 import { useCardLayout } from "../hooks/useCardLayout";
 import { SortableCardGrid, type CardControls } from "./SortableCardGrid";
 import { CardRvsModal } from "./CardRvsModal";
@@ -63,6 +70,12 @@ interface Props {
   data: VehicleResponse;
   address: string | null;
   checkin?: CheckinData | null;
+  journey?: JourneyFile | null;
+  daily?: DailyFile | null;
+  stockWatch?: StockWatchState | null;
+  stockWatchLoading?: boolean;
+  onRefreshStockWatch?: (targetId?: string) => void;
+  power?: PowerFile | null;
 }
 
 function doorOpen(status: number): boolean {
@@ -84,9 +97,21 @@ function BlockRows({ rows }: { rows: Array<{ label: string; value: ReactNode }> 
   );
 }
 
-export const DashboardCards = memo(function DashboardCards({ data, address, checkin }: Props) {
+export const DashboardCards = memo(function DashboardCards({
+  data,
+  address,
+  checkin,
+  journey,
+  daily,
+  stockWatch,
+  stockWatchLoading = false,
+  onRefreshStockWatch,
+  power,
+}: Props) {
+  const monthKeyNow = localDayKey().slice(0, 7);
   const [layout, updateLayout] = useCardLayout("vehicle", VEHICLE_CARDS);
   const [rvsModal, setRvsModal] = useState<{ title: string; payload: Record<string, unknown> } | null>(null);
+  const [certOpen, setCertOpen] = useState(false);
   const s = extractVehicleStatus(data);
   if (!s) {
     return (
@@ -151,6 +176,8 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
   const vehicleReady = s.exterior_status.vehicle_state === 2;
   const versionRaw = s.fota_status?.current_version ?? "";
   const version = versionRaw.split("*")[1] ?? versionRaw;
+  const fotaUpdating = isFotaUpdating(s.fota_status);
+  const fotaPercent = fotaDownloadPercent(s.fota_status);
   const fullRange = fullChargeRangeKm(s.soc_status.remaining_range, soc);
   const fullRangeLabel = fullRange != null ? batteryPackLabel(fullRange) : "";
 
@@ -163,15 +190,132 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
     });
   };
 
+  const renderStockCard = (
+    targetId: "swap" | "drive",
+    title: string,
+    chrome: {
+      dragHandleProps: CardControls["dragHandleProps"];
+      dragListeners: CardControls["dragListeners"];
+      onHide: () => void;
+    },
+  ) => {
+    const item = stockWatch?.items.find((entry) => entry.id === targetId);
+    const tone = stockStatusTone(item?.status ?? "unknown");
+    return (
+      <DashCard
+        icon={<IconCube />}
+        title={title}
+        badge={
+          <StatusPill tone={item ? tone : "neutral"}>
+            {stockWatchLoading ? "检查中…" : item?.label ?? "尚未检查"}
+          </StatusPill>
+        }
+        {...chrome}
+      >
+        {item?.goodsName && <RowItem label="商品" value={item.goodsName} />}
+        <RowItem label="状态" value={stockWatchLoading ? "检查中…" : item?.label ?? "尚未检查"} />
+        {item?.detectedText && <RowItem label="检测文本" value={item.detectedText} />}
+        {item?.evidence && <RowItem label="判断依据" value={item.evidence} />}
+        <RowItem label="上次检查" value={item?.at ? fmtTime(item.at) : "—"} />
+        {item?.error && <p className="nas-error stock-watch-error">{item.error}</p>}
+        <div className="stock-watch-actions">
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={stockWatchLoading}
+            onClick={() => onRefreshStockWatch?.(targetId)}
+          >
+            {stockWatchLoading ? "检查中…" : "立即检查"}
+          </button>
+          {item?.url && (
+            <a className="btn ghost" href={item.url} target="_blank" rel="noreferrer">
+              打开商品页
+            </a>
+          )}
+        </div>
+      </DashCard>
+    );
+  };
+
   const renderCard = (id: string, controls: CardControls) => {
     const chrome = {
       dragHandleProps: controls.dragHandleProps,
       dragListeners: controls.dragListeners,
       onHide: () => hideCard(id),
-      onShowRvs: () => showRvs(id),
+      ...(id === "stock_swap" ||
+      id === "stock_drive" ||
+      id === "daily_mileage" ||
+      id === "recent_journey" ||
+      id === "home_charger"
+        ? {}
+        : { onShowRvs: () => showRvs(id) }),
     };
 
     switch (id) {
+      case "home_charger": {
+        const spot = power?.spot;
+        const realtime = power?.realtime;
+        const lastService = power?.services?.[0];
+        const thisMonth = power?.months?.[monthKeyNow];
+        return (
+          <DashCard
+            icon={<IconPlug />}
+            title={spot?.name ?? "家充桩"}
+            badge={
+              spot ? (
+                <StatusPill tone={spot.is_online ? "success" : "warning"}>
+                  {realtime?.effective_state_desc ?? (spot.is_online ? "在线" : "离线")}
+                </StatusPill>
+              ) : undefined
+            }
+            {...chrome}
+          >
+            {!spot && (
+              <p className="muted card-empty-hint">在「数据同步 → 更新 Token」选择带加电页面的 HAR 文件</p>
+            )}
+            {spot && (
+              <BlockRows
+                rows={[
+                  { label: "型号", value: [spot.model, spot.resource_type === "DCPowerCharger" ? "直流" : null].filter(Boolean).join(" · ") || "—" },
+                  { label: "枪状态", value: workStateLabel(spot.work_state) },
+                  { label: "联网", value: spot.is_online ? (spot.mobile_network_state ? "在线 · 4G" : "在线") : "离线" },
+                  {
+                    label: "预约充电",
+                    value: spot.reservation_state
+                      ? `${spot.reservation_starttime?.slice(0, 5) ?? "—"} – ${spot.reservation_endtime?.slice(0, 5) ?? "—"}`
+                      : "未开启",
+                  },
+                  {
+                    label: "上次充电",
+                    value: lastService?.start_time
+                      ? `${fmtTime(lastService.start_time)} · ${lastService.consume_power ?? "—"} kWh · ${formatDurationSec((lastService.charge_duration ?? 0) / 1000)}`
+                      : "—",
+                  },
+                  {
+                    label: "本月",
+                    value: thisMonth
+                      ? `${thisMonth.total_charging_times} 次 · ${thisMonth.total_real_charge_kwh.toFixed(1)} kWh`
+                      : "—",
+                  },
+                  { label: "固件", value: spot.software_version ?? "—" },
+                  {
+                    label: "站点证书",
+                    value: (
+                      <button type="button" className="row-link" onClick={() => setCertOpen(true)}>
+                        至 {NIO_SITE_CERT_NOT_AFTER}
+                      </button>
+                    ),
+                  },
+                ]}
+              />
+            )}
+            {power?.capturedAt && (
+              <p className="muted card-foot-note">数据来自抓包 · {fmtTime(power.capturedAt)}</p>
+            )}
+          </DashCard>
+        );
+      }
+
       case "battery":
         return (
           <DashCard
@@ -211,7 +355,13 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
             <BlockRows
               rows={[
                 { label: "充电状态", value: chargeStateLabel(s.soc_status.charge_state) },
-                { label: "充电类型", value: chargerTypeLabel(socExtra.charger_type ?? 0) },
+                {
+                  label: "充电类型",
+                  value:
+                    s.soc_status.charge_state === 0
+                      ? `未在充电 · 上次${chargerTypeLabel(Number(socExtra.charger_type ?? 0))}`
+                      : chargerTypeLabel(Number(socExtra.charger_type ?? 0)),
+                },
                 { label: "充电功率", value: formatChargingPowerKw(socExtra.charging_power as number | undefined) },
                 { label: "充电电流", value: `${socExtra.charging_current ?? 0} A` },
                 { label: "充电电压", value: `${socExtra.charging_voltage ?? 0} V` },
@@ -271,7 +421,10 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
           sun_roof_posn: "天窗",
           mirr_frnt_le_sts: "左后视镜",
           mirr_frnt_ri_sts: "右后视镜",
-        }, (_, v) => (typeof v === "number" ? windowPosLabel(v) : null));
+        }, (key, v) => {
+          if (typeof v !== "number") return null;
+          return key.startsWith("mirr_") ? `状态码 ${v}` : windowPosLabel(v);
+        });
         return (
           <DashCard icon={<IconWindow />} title="车窗" {...chrome}>
             <BlockRows rows={winRows} />
@@ -307,22 +460,41 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
             icon={<IconCube />}
             title="软件版本"
             badge={
-              <StatusPill tone="dark">{s.fota_status.fota_status === 0 ? "已是最新" : "有更新"}</StatusPill>
+              <StatusPill tone={fotaUpdating ? "warning" : "dark"}>
+                {fotaUpdating ? (fotaPercent != null ? `下载 ${fotaPercent}%` : "更新中") : "已是最新"}
+              </StatusPill>
             }
             {...chrome}
           >
             <RowItem label="当前版本" value={`v${version.replace(/^v/i, "")}`} />
             <RowItem label="零件号" value={s.fota_status.current_part_no} />
             <RowItem label="上一版本" value={s.fota_status.last_version?.split("*")[1] ?? s.fota_status.last_version ?? "—"} />
+            {fotaUpdating && (
+              <div className="fota-progress">
+                <div className="fota-progress-head">
+                  <span>更新进度</span>
+                  <span>{fotaPercent != null ? `${fotaPercent}%` : "等待进度"}</span>
+                </div>
+                <div className="fota-progress-track" role="progressbar" aria-valuenow={fotaPercent ?? 0} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="fota-progress-bar" style={{ width: `${fotaPercent ?? 0}%` }} />
+                </div>
+              </div>
+            )}
             <div className="card-section-divider">
               <IconGps />
               <span>GPS 位置</span>
             </div>
-            <RowItem label="经度" value={s.position_status.longitude.toFixed(4)} />
-            <RowItem label="纬度" value={s.position_status.latitude.toFixed(4)} />
-            <AddressPill href={mapsUrl(s.position_status.latitude, s.position_status.longitude)}>
-              {address ?? `${s.position_status.latitude.toFixed(2)}°N, ${s.position_status.longitude.toFixed(2)}°E`}
-            </AddressPill>
+            {isValidGps(s.position_status.latitude, s.position_status.longitude) ? (
+              <>
+                <RowItem label="经度" value={s.position_status.longitude.toFixed(4)} />
+                <RowItem label="纬度" value={s.position_status.latitude.toFixed(4)} />
+                <AddressPill href={mapsUrl(s.position_status.latitude, s.position_status.longitude)}>
+                  {address ?? `${s.position_status.latitude.toFixed(2)}°N, ${s.position_status.longitude.toFixed(2)}°E`}
+                </AddressPill>
+              </>
+            ) : (
+              <RowItem label="位置" value="这次返回没有 GPS" />
+            )}
           </DashCard>
         );
 
@@ -592,6 +764,75 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
           </DashCard>
         );
 
+      case "daily_mileage":
+        return (
+          <DashCard icon={<IconCar />} title="当日里程" {...chrome}>
+            {daily?.error && <p className="nas-error">{daily.error}</p>}
+            <BlockRows
+              rows={[
+                { label: "今天", value: daily?.daily_mileage != null ? `${daily.daily_mileage} km` : "—" },
+                { label: "累计", value: daily?.mileage != null ? `${daily.mileage.toLocaleString()} km` : "—" },
+                { label: "激活", value: daily?.activate_days != null ? `${daily.activate_days} 天` : "—" },
+              ]}
+            />
+          </DashCard>
+        );
+
+      case "recent_journey": {
+        const trip = journey?.journey;
+        const start = tripTimeMs(trip?.start_time);
+        const end = tripTimeMs(trip?.end_time);
+        return (
+          <DashCard
+            icon={<IconGps />}
+            title="最近行程"
+            badge={
+              journey?.month ? <StatusPill tone="neutral">{journey.month} 月报</StatusPill> : undefined
+            }
+            {...chrome}
+          >
+            {journey?.error && <p className="nas-error">{journey.error}</p>}
+            {!trip && !journey?.error && <EmptyHint />}
+            {trip && (
+              <BlockRows
+                rows={[
+                  {
+                    label: "时间",
+                    value: start && end ? `${fmtTime(start)} – ${fmtTime(end)}` : "—",
+                  },
+                  {
+                    label: "用时",
+                    value: trip.journey_duration_by_minutes != null ? `${trip.journey_duration_by_minutes} 分钟` : "—",
+                  },
+                  {
+                    label: "里程",
+                    value: trip.trip_odometer != null ? `${trip.trip_odometer} km` : "—",
+                  },
+                  {
+                    label: "速度",
+                    value:
+                      trip.avg_speed != null
+                        ? `均 ${trip.avg_speed.toFixed(1)} · 最高 ${trip.max_speed ?? "—"} km/h`
+                        : "—",
+                  },
+                  {
+                    label: "急加速 / 减速 / 转弯",
+                    value: `${trip.rapid_acceleration ?? 0} / ${trip.rapid_deceleration ?? 0} / ${trip.rapid_swerve ?? 0}`,
+                  },
+                  { label: "起点", value: placeLabel(trip.start_location) },
+                  { label: "终点", value: placeLabel(trip.end_location) },
+                ]}
+              />
+            )}
+          </DashCard>
+        );
+      }
+
+      case "stock_swap":
+        return renderStockCard("swap", "换电订单", chrome);
+      case "stock_drive":
+        return renderStockCard("drive", "驾享订单", chrome);
+
       default:
         return null;
     }
@@ -607,6 +848,14 @@ export const DashboardCards = memo(function DashboardCards({ data, address, chec
           title={rvsModal.title}
           payload={rvsModal.payload}
           onClose={() => setRvsModal(null)}
+        />
+      )}
+      {certOpen && (
+        <CardRvsModal
+          title="站点证书"
+          kind="证书信息"
+          payload={NIO_SITE_CERT}
+          onClose={() => setCertOpen(false)}
         />
       )}
     </>

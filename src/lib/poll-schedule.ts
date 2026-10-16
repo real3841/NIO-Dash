@@ -37,8 +37,14 @@ export function vehiclePollReason(
   return isDaytime(now) ? "day" : "night";
 }
 
-export function vehiclePollLabel(reason: "driving" | "day" | "night"): string {
-  return { driving: "行驶中", day: "白天", night: "夜间" }[reason];
+export const FOTA_POLL_SEC = 120;
+
+export function isFotaUpdating(fota: { fota_status?: number } | null | undefined): boolean {
+  return typeof fota?.fota_status === "number" && fota.fota_status !== 0;
+}
+
+export function vehiclePollLabel(reason: "driving" | "day" | "night" | "fota"): string {
+  return { driving: "行驶中", day: "白天", night: "夜间", fota: "系统更新" }[reason];
 }
 
 export interface VehiclePollEnv {
@@ -78,23 +84,31 @@ export function getVehiclePollIntervalSec(
   env: VehiclePollEnv,
   vehicleState: number | null,
   now = new Date(),
+  fota?: { fota_status?: number } | null,
 ): number {
-  const intervals = getVehiclePollIntervals(env);
-  const reason = vehiclePollReason(vehicleState, now);
-  return reason === "driving" ? intervals.driving : reason === "day" ? intervals.day : intervals.night;
+  return getVehiclePollInfo(env, vehicleState, now, fota).intervalSec;
 }
 
 export function getVehiclePollInfo(
   env: VehiclePollEnv,
   vehicleState: number | null,
   now = new Date(),
+  fota?: { fota_status?: number } | null,
 ): {
   intervalSec: number;
-  reason: "driving" | "day" | "night";
+  reason: "driving" | "day" | "night" | "fota";
   reasonLabel: string;
   intervals: VehiclePollIntervals;
 } {
   const intervals = getVehiclePollIntervals(env);
+  if (isFotaUpdating(fota)) {
+    return {
+      intervalSec: FOTA_POLL_SEC,
+      reason: "fota",
+      reasonLabel: vehiclePollLabel("fota"),
+      intervals,
+    };
+  }
   const reason = vehiclePollReason(vehicleState, now);
   const intervalSec =
     reason === "driving" ? intervals.driving : reason === "day" ? intervals.day : intervals.night;
@@ -108,4 +122,33 @@ export function minVehiclePollSec(env: VehiclePollEnv): number {
 
 export function isVehiclePollKey(key: string): boolean {
   return (VEHICLE_POLL_KEYS as readonly string[]).includes(key);
+}
+
+export const DEFAULT_CHANGE_POLL_SEC = 86400;
+
+export const CHANGE_POLL_OPTIONS = [
+  { sec: 86400, label: "每 1 天" },
+  { sec: 43200, label: "每 12 小时" },
+  { sec: 21600, label: "每 6 小时" },
+] as const;
+
+export function changePollLabel(sec: number | undefined): string {
+  if (!sec) return "—";
+  const preset = CHANGE_POLL_OPTIONS.find((o) => o.sec === sec);
+  if (preset) return preset.label;
+  if (sec % 3600 === 0) return `每 ${sec / 3600} 小时`;
+  if (sec % 60 === 0) return `每 ${sec / 60} 分钟`;
+  return `每 ${sec} 秒`;
+}
+
+export function formatPollSummary(
+  intervals: VehiclePollIntervals | null | undefined,
+  reasonLabel: string | undefined,
+  vehiclePollSec: number | undefined,
+  changePollSec: number | undefined,
+): string {
+  if (intervals) {
+    return `行驶 ${intervals.driving}s · 白天 ${intervals.day}s · 夜间 ${intervals.night}s · 当前「${reasonLabel ?? "—"}」${vehiclePollSec ?? "—"}s · 换电${changePollLabel(changePollSec)}`;
+  }
+  return `页面重读 ${vehiclePollSec ?? "—"}s · 换电${changePollLabel(changePollSec)}`;
 }

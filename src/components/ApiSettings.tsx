@@ -4,7 +4,6 @@ import type { CheckinData } from "../lib/checkin";
 import {
   CHECKIN_API_FIELDS,
   CHANGE_API_FIELDS,
-  CHANGE_POLL_FIELDS,
   fetchEnvConfig,
   saveChangeEnv,
   saveVehicleEnv,
@@ -14,32 +13,32 @@ import {
   type EnvConfigResponse,
   type VehicleEnv,
 } from "../lib/env-config";
+import { errorKindHint } from "../lib/nio-api-errors";
+import { captureFieldSummary, isWidgetVehicleUrl, missingCriticalFields } from "../lib/rvs-capture";
 import { fmtTime } from "../lib/vehicle";
 import {
-  getVehiclePollIntervals,
+  CHANGE_POLL_OPTIONS,
+  DEFAULT_CHANGE_POLL_SEC,
   isVehiclePollKey,
   normalizeVehiclePollEnv,
   parsePollSec,
   type VehiclePollEnv,
-  type VehiclePollIntervals,
 } from "../lib/poll-schedule";
 import {
   isChangeApiConfigured,
   isCheckinApiConfigured,
   isVehicleApiConfigured,
   resolveApiStatus,
+  resolveCheckinApiStatus,
 } from "../lib/api-status";
+import { CapturePaste } from "./CapturePaste";
 import { EnvConfigForm } from "./EnvConfigForm";
-import { ApiStatusBadge } from "./ApiStatusBadge";
-import { TrayDisplaySettings } from "./TrayDisplaySettings";
-import { CardLayoutSettings } from "./CardLayoutSettings";
-import { SyncRuntimeLogModal } from "./SyncRuntimeLogModal";
+import type { StockWatchState } from "../lib/stock-watch";
+import { SyncControlBar, type SyncPanelId, type SyncTarget } from "./SyncControlBar";
 
-export type SyncTarget = "vehicle" | "change" | "all";
+export type { SyncTarget };
 
 interface ApiSettingsProps {
-  onRefresh: (target: SyncTarget, triggerFetch: boolean) => void;
-  loadingTarget: SyncTarget | null;
   lastSyncVehicle: number | null;
   lastSyncChange: number | null;
   lastSyncCheckin?: number | null;
@@ -49,22 +48,23 @@ interface ApiSettingsProps {
   checkinData?: CheckinData | null;
   errorVehicle: string | null;
   errorChange: string | null;
-  vehiclePollSec?: number;
-  vehiclePollReasonLabel?: string;
-  vehiclePollConfigured?: VehiclePollIntervals;
-  changePollSec?: number;
   onPollConfigLoaded: (vehicleEnv: VehiclePollEnv, changeSec: number) => void;
+  onTriggerCheckin?: () => Promise<void>;
+  stockWatch?: StockWatchState | null;
+  onStockWatchPollSecChange?: (pollSec: number) => void | Promise<void>;
+  onSaveStockWatchAuth?: (auth: { cookie?: string; token?: string }) => boolean | Promise<boolean>;
+  onQuickAuthDone?: () => void | Promise<void>;
 }
 
 function metaLine(meta: FetchMeta | null | undefined): string {
   if (!meta) return "暂无拉取记录";
   if (meta.ok) return `拉取成功 · ${fmtTime(meta.at)}`;
-  return `拉取失败 · ${meta.error ?? "未知错误"}`;
+  const hint = errorKindHint(meta.errorKind);
+  const base = `拉取失败 · ${meta.error ?? "未知错误"}`;
+  return hint ? `${base} · ${hint}` : base;
 }
 
 export function ApiSettings({
-  onRefresh,
-  loadingTarget,
   lastSyncVehicle,
   lastSyncChange,
   lastSyncCheckin,
@@ -74,28 +74,30 @@ export function ApiSettings({
   checkinData,
   errorVehicle,
   errorChange,
-  vehiclePollSec,
-  vehiclePollReasonLabel,
-  vehiclePollConfigured,
-  changePollSec,
   onPollConfigLoaded,
+  onTriggerCheckin,
+  stockWatch,
+  onStockWatchPollSecChange,
+  onSaveStockWatchAuth,
+  onQuickAuthDone,
 }: ApiSettingsProps) {
   const [envConfig, setEnvConfig] = useState<EnvConfigResponse | null>(null);
+  const [checkinTesting, setCheckinTesting] = useState(false);
+  const [checkinTestMsg, setCheckinTestMsg] = useState<string | null>(null);
   const [vehicleDraft, setVehicleDraft] = useState<VehicleEnv | null>(null);
   const [changeDraft, setChangeDraft] = useState<ChangeEnv | null>(null);
-  const [configOpen, setConfigOpen] = useState<"vehicle" | "change" | "checkin" | null>(null);
+  const [activePanel, setActivePanel] = useState<SyncPanelId>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingVehicle, setSavingVehicle] = useState(false);
   const [savingChange, setSavingChange] = useState(false);
   const [saveMsgVehicle, setSaveMsgVehicle] = useState<string | null>(null);
   const [saveMsgChange, setSaveMsgChange] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
-  const [logOpen, setLogOpen] = useState(false);
 
   const syncPollConfig = (vehicle: VehicleEnv, changeInterval: string) => {
     onPollConfigLoaded(
       normalizeVehiclePollEnv(vehicle),
-      parsePollSec(changeInterval, 3600),
+      parsePollSec(changeInterval, DEFAULT_CHANGE_POLL_SEC),
     );
   };
 
@@ -113,8 +115,7 @@ export function ApiSettings({
         ...cfg.change,
         NIO_CHANGE_POLL_INTERVAL:
           cfg.change.NIO_CHANGE_POLL_INTERVAL ||
-          cfg.general.NIO_POLL_INTERVAL ||
-          "3600",
+          String(DEFAULT_CHANGE_POLL_SEC),
       };
       setVehicleDraft(vehicle);
       setChangeDraft(change);
@@ -129,12 +130,10 @@ export function ApiSettings({
   useEffect(() => {
     void loadConfig();
     if (new URLSearchParams(window.location.search).get("setup") === "1") {
-      setConfigOpen("vehicle");
+      setActivePanel("vehicle");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const busy = (target: SyncTarget) => loadingTarget === target || loadingTarget === "all";
 
   const handleSaveVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,7 +143,7 @@ export function ApiSettings({
     try {
       syncPollConfig(
         vehicleDraft,
-        changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? "3600",
+        changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? String(DEFAULT_CHANGE_POLL_SEC),
       );
       await saveVehicleEnv(vehicleDraft);
       setSaveMsgVehicle("配置已保存，车辆拉取计划已更新");
@@ -180,53 +179,51 @@ export function ApiSettings({
     changeMeta,
     isChangeApiConfigured(changeDraft),
   );
-  const checkinStatus = resolveApiStatus(
+  const checkinStatus = resolveCheckinApiStatus(
     checkinMeta,
     isCheckinApiConfigured(vehicleDraft),
+    checkinData,
   );
 
-  const pollIntervals =
-    vehiclePollConfigured ??
-    (vehicleDraft ? getVehiclePollIntervals(vehicleDraft) : null);
+  const vehicleUrl = vehicleDraft?.NIO_VEHICLE_API_URL?.trim() ?? "";
+  const vehicleUsesWidget = vehicleUrl ? isWidgetVehicleUrl(vehicleUrl) : false;
+  const missingCaptureFields = vehicleUrl ? missingCriticalFields(vehicleUrl) : [];
+  const captureFields = vehicleUrl ? captureFieldSummary(vehicleUrl) : "";
 
   const handleVehiclePollChange = (key: string, value: string) => {
     setVehicleDraft((prev) => {
       if (!prev) return prev;
       const next = { ...prev, [key]: value };
       if (isVehiclePollKey(key)) {
-        syncPollConfig(next, changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? "3600");
+        syncPollConfig(next, changeDraft?.NIO_CHANGE_POLL_INTERVAL ?? String(DEFAULT_CHANGE_POLL_SEC));
       }
       return next;
     });
   };
 
   return (
-    <section className="panel api-panel">
-      <div className="panel-head">
-        <h2>数据同步</h2>
-        <div className="row sync-actions">
-          <button type="button" className="btn ghost" onClick={() => setLogOpen(true)}>
-            运行日志
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={() => onRefresh("vehicle", true)}
-            disabled={busy("vehicle")}
-          >
-            {busy("vehicle") ? "车辆同步中…" : "刷新车辆"}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={() => onRefresh("change", true)}
-            disabled={busy("change")}
-          >
-            {busy("change") ? "换电同步中…" : "刷新换电"}
-          </button>
-        </div>
-      </div>
-      {logOpen && <SyncRuntimeLogModal onClose={() => setLogOpen(false)} />}
+    <section className="panel api-panel sync-hub-panel">
+      <SyncControlBar
+        activePanel={activePanel}
+        onPanelChange={setActivePanel}
+        vehicleStatus={vehicleStatus}
+        changeStatus={changeStatus}
+        checkinStatus={checkinStatus}
+        vehicleMeta={vehicleMeta}
+        changeMeta={changeMeta}
+        checkinMeta={checkinMeta}
+        stockWatch={stockWatch}
+        onStockWatchPollSecChange={onStockWatchPollSecChange}
+        onSaveStockWatchAuth={onSaveStockWatchAuth}
+        trayInitialDisplay={envConfig?.general.NIO_TRAY_DISPLAY || "soc,range"}
+        onMapSaved={() => {
+          window.dispatchEvent(new CustomEvent("nio-map-config-updated"));
+        }}
+        onQuickAuthDone={async () => {
+          await loadConfig();
+          await onQuickAuthDone?.();
+        }}
+      />
 
       {configError && (
         <div className="alert alert-danger">
@@ -236,39 +233,32 @@ export function ApiSettings({
         </div>
       )}
 
-      {envConfig?.path && (
-        <p className="muted api-hint">配置文件: {envConfig.path}</p>
-      )}
-
-      <TrayDisplaySettings
-        key={envConfig?.general.NIO_TRAY_DISPLAY ?? "default"}
-        initialDisplay={envConfig?.general.NIO_TRAY_DISPLAY || "soc,range"}
-      />
-
-      <CardLayoutSettings />
-
-      <div className="sync-split sync-split-3">
-        <div className="sync-block">
-          <div className="sync-block-head">
-            <div className="sync-block-title">
-              <h3>车辆 API 配置</h3>
-              <ApiStatusBadge status={vehicleStatus} meta={vehicleMeta} />
-            </div>
-            <button
-              type="button"
-              className="btn ghost btn-sm"
-              onClick={() => setConfigOpen((v) => (v === "vehicle" ? null : "vehicle"))}
-            >
-              {configOpen === "vehicle" ? "收起" : "编辑"}
-            </button>
-          </div>
+      {activePanel === "vehicle" && (
+        <div className="sync-hub-panel-body">
           <p className="muted sync-block-meta">{metaLine(vehicleMeta)}</p>
           <p className="muted sync-block-meta">
             页面读取{lastSyncVehicle ? ` · ${fmtTime(lastSyncVehicle)}` : " · —"}
           </p>
           {errorVehicle && <div className="alert alert-danger">{errorVehicle}</div>}
-          {configOpen === "vehicle" && vehicleDraft && (
+          {vehicleDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveVehicle}>
+              <CapturePaste
+                expected="vehicle"
+                disabled={loadingConfig || savingVehicle}
+                onApply={(parsed) =>
+                  setVehicleDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          NIO_VEHICLE_API_URL: parsed.url,
+                          NIO_VEHICLE_ACCESS_TOKEN: parsed.token,
+                          NIO_VEHICLE_USER_AGENT: parsed.userAgent,
+                          NIO_VEHICLE_API_METHOD: parsed.method,
+                        }
+                      : prev,
+                  )
+                }
+              />
               <EnvConfigForm
                 fields={VEHICLE_API_FIELDS}
                 values={vehicleDraft as unknown as Record<string, string>}
@@ -278,9 +268,20 @@ export function ApiSettings({
                 disabled={loadingConfig || savingVehicle}
               />
               <p className="muted api-hint">
-                从 Postman 复制完整 GET URL（含 sign、timestamp），再单独填入 Authorization Token。
-                sign 过期后需重新复制 URL。
+                {vehicleUsesWidget
+                  ? "也可以只改下面的 URL 和 Token。Widget 请求按 GET 发送。sign 过期后重新粘贴整段抓包。"
+                  : "也可以只改下面的 URL 和 Token。sign 过期后重新粘贴整段抓包。"}
               </p>
+              {vehicleUrl && (
+                <p className="muted api-hint">
+                  {vehicleUsesWidget ? "已解析" : "已解析 field"}：{captureFields}
+                </p>
+              )}
+              {missingCaptureFields.length > 0 && (
+                <div className="alert alert-danger">
+                  抓包 URL 缺少关键 field：{missingCaptureFields.join("、")}。请重新复制完整 status 请求，否则对应卡片可能无数据。
+                </div>
+              )}
               <details className="vehicle-poll-details">
                 <summary className="muted">拉取间隔（可选）</summary>
                 <EnvConfigForm
@@ -305,28 +306,39 @@ export function ApiSettings({
             </form>
           )}
         </div>
+      )}
 
-        <div className="sync-block">
-          <div className="sync-block-head">
-            <div className="sync-block-title">
-              <h3>换电 API 配置</h3>
-              <ApiStatusBadge status={changeStatus} meta={changeMeta} />
-            </div>
-            <button
-              type="button"
-              className="btn ghost btn-sm"
-              onClick={() => setConfigOpen((v) => (v === "change" ? null : "change"))}
-            >
-              {configOpen === "change" ? "收起" : "编辑"}
-            </button>
-          </div>
+      {activePanel === "change" && (
+        <div className="sync-hub-panel-body">
           <p className="muted sync-block-meta">{metaLine(changeMeta)}</p>
           <p className="muted sync-block-meta">
             页面读取{lastSyncChange ? ` · ${fmtTime(lastSyncChange)}` : " · —"}
           </p>
           {errorChange && <div className="alert alert-danger">{errorChange}</div>}
-          {configOpen === "change" && changeDraft && (
+          {changeDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveChange}>
+              <CapturePaste
+                expected="change"
+                disabled={loadingConfig || savingChange}
+                onApply={(parsed) =>
+                  setChangeDraft((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          NIO_CHANGE_API_URL: parsed.url,
+                          NIO_CHANGE_ACCESS_TOKEN: parsed.token,
+                          NIO_CHANGE_USER_AGENT: parsed.userAgent,
+                          NIO_CHANGE_MOBILEINFO: parsed.mobileinfo,
+                          NIO_CHANGE_API_METHOD: parsed.method,
+                          NIO_CHANGE_API_BODY: parsed.body || "{}",
+                          NIO_CHANGE_API_MODE: parsed.url.includes("/serviceOrder/getTabOrder")
+                            ? "cursor"
+                            : "raw",
+                        }
+                      : prev,
+                  )
+                }
+              />
               <EnvConfigForm
                 fields={CHANGE_API_FIELDS}
                 values={changeDraft as unknown as Record<string, string>}
@@ -336,19 +348,40 @@ export function ApiSettings({
                 disabled={loadingConfig || savingChange}
               />
               <p className="muted api-hint">
-                从 Postman 复制完整 URL（Query Params），再单独填入 Authorization Token。接口使用 POST 请求。
+                {changeDraft.NIO_CHANGE_API_MODE === "raw" || changeDraft.NIO_CHANGE_API_MODE === "params"
+                  ? "当前按填写的 URL 原样 POST，只拉一页。粘贴 App「换电订单」列表的 serviceOrder/getTabOrder 抓包可改为翻到底。"
+                  : "按 App「换电订单」列表接口每页 10 条一直翻到最后一页，正文为 {}。只需要 Token 有效。"}
               </p>
-              <details className="vehicle-poll-details">
-                <summary className="muted">拉取间隔（可选）</summary>
-                <EnvConfigForm
-                  fields={CHANGE_POLL_FIELDS}
-                  values={changeDraft as unknown as Record<string, string>}
-                  onChange={(key, value) =>
-                    setChangeDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
-                  }
+              <label className="change-poll-select">
+                <span>自动刷新</span>
+                <select
+                  value={changeDraft.NIO_CHANGE_POLL_INTERVAL || String(DEFAULT_CHANGE_POLL_SEC)}
                   disabled={loadingConfig || savingChange}
-                />
-              </details>
+                  onChange={(e) => {
+                    const next = { ...changeDraft, NIO_CHANGE_POLL_INTERVAL: e.target.value };
+                    setChangeDraft(next);
+                    if (vehicleDraft) syncPollConfig(vehicleDraft, e.target.value);
+                    void saveChangeEnv(next)
+                      .then(() => setSaveMsgChange("自动刷新间隔已保存"))
+                      .catch((err) =>
+                        setSaveMsgChange(err instanceof Error ? err.message : "保存失败"),
+                      );
+                  }}
+                >
+                  {!CHANGE_POLL_OPTIONS.some((o) => String(o.sec) === changeDraft.NIO_CHANGE_POLL_INTERVAL) &&
+                    changeDraft.NIO_CHANGE_POLL_INTERVAL && (
+                      <option value={changeDraft.NIO_CHANGE_POLL_INTERVAL}>
+                        自定义 {changeDraft.NIO_CHANGE_POLL_INTERVAL} 秒
+                      </option>
+                    )}
+                  {CHANGE_POLL_OPTIONS.map((o) => (
+                    <option key={o.sec} value={String(o.sec)}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted">也可以点右上角「刷新换电」手动拉</span>
+              </label>
               <div className="row">
                 <button type="submit" className="btn secondary" disabled={savingChange}>
                   {savingChange ? "保存中…" : "保存换电配置"}
@@ -361,22 +394,16 @@ export function ApiSettings({
             </form>
           )}
         </div>
+      )}
 
-        <div className="sync-block">
-          <div className="sync-block-head">
-            <div className="sync-block-title">
-              <h3>签到 API 配置</h3>
-              <ApiStatusBadge status={checkinStatus} meta={checkinMeta} />
-            </div>
-            <button
-              type="button"
-              className="btn ghost btn-sm"
-              onClick={() => setConfigOpen((v) => (v === "checkin" ? null : "checkin"))}
-            >
-              {configOpen === "checkin" ? "收起" : "编辑"}
-            </button>
-          </div>
+      {activePanel === "checkin" && (
+        <div className="sync-hub-panel-body">
           <p className="muted sync-block-meta">{metaLine(checkinMeta)}</p>
+          {checkinMeta?.ok === false && checkinData && (
+            <p className="muted sync-block-meta">
+              独立签到 API 最近失败，但已从车辆 Widget / checkin.json 读取到签到数据。
+            </p>
+          )}
           <p className="muted sync-block-meta">
             {checkinData
               ? `今日${checkinData.checked_in ? "已" : "未"}签到 · 连续 ${checkinData.continuous_days} 天`
@@ -390,7 +417,7 @@ export function ApiSettings({
                 ? ` · ${fmtTime(checkinMeta.at)}`
                 : " · —"}
           </p>
-          {configOpen === "checkin" && vehicleDraft && (
+          {vehicleDraft && (
             <form className="api-form env-config-form" onSubmit={handleSaveVehicle}>
               <EnvConfigForm
                 fields={CHECKIN_API_FIELDS}
@@ -400,47 +427,41 @@ export function ApiSettings({
                 }
                 disabled={loadingConfig || savingVehicle}
               />
-                <p className="muted api-hint">
-                  GET 签到接口，每天 9:00 自动拉取一次；9 点后首次打开也会补拉，当天不再重复。Token 可留空，默认沿用车辆 Authorization。
-                </p>
+              <p className="muted api-hint">
+                GET 签到接口，每天 9:00 自动拉取一次；9 点后首次打开也会补拉，当天不再重复。Token 可留空，默认沿用车辆 Authorization。
+              </p>
               <div className="row">
                 <button type="submit" className="btn secondary" disabled={savingVehicle}>
                   {savingVehicle ? "保存中…" : "保存签到配置"}
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={checkinTesting || !onTriggerCheckin}
+                  onClick={() => {
+                    if (!onTriggerCheckin) return;
+                    setCheckinTestMsg(null);
+                    setCheckinTesting(true);
+                    void onTriggerCheckin()
+                      .then(() => setCheckinTestMsg("签到拉取成功，请查看运行日志"))
+                      .catch((err) =>
+                        setCheckinTestMsg(err instanceof Error ? err.message : "签到拉取失败"),
+                      )
+                      .finally(() => setCheckinTesting(false));
+                  }}
+                >
+                  {checkinTesting ? "拉取中…" : "立即测试拉取"}
                 </button>
                 <button type="button" className="btn ghost" onClick={() => void loadConfig()}>
                   重新加载
                 </button>
               </div>
+              {checkinTestMsg && <p className="save-hint">{checkinTestMsg}</p>}
               {saveMsgVehicle && <p className="save-hint">{saveMsgVehicle}</p>}
             </form>
           )}
         </div>
-      </div>
-
-      <div className="sync-meta">
-        <span>
-          {pollIntervals ? (
-            <>
-              已配置：行驶 {pollIntervals.driving}s · 白天 {pollIntervals.day}s · 夜间{" "}
-              {pollIntervals.night}s · 当前「{vehiclePollReasonLabel ?? "—"}」页面每{" "}
-              {vehiclePollSec ?? "—"}s 重读 JSON
-            </>
-          ) : (
-            <>
-              页面重读 JSON：当前「{vehiclePollReasonLabel ?? "—"}」约每 {vehiclePollSec ?? "—"}s
-            </>
-          )}
-          {" · "}换电每 {changePollSec ?? (changeDraft ? parsePollSec(changeDraft.NIO_CHANGE_POLL_INTERVAL, 3600) : "—")}s
-        </span>
-        <button
-          type="button"
-          className="btn ghost btn-sm"
-          onClick={() => onRefresh("all", true)}
-          disabled={loadingTarget !== null}
-        >
-          {loadingTarget === "all" ? "全部同步中…" : "全部刷新（车辆+换电）"}
-        </button>
-      </div>
+      )}
     </section>
   );
 }

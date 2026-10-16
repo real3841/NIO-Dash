@@ -6,36 +6,30 @@ interface Props {
 
 interface State {
   error: Error | null;
-  retryKey: number;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, retryKey: 0 };
+  state: State = { error: null };
 
-  static getDerivedStateFromError(error: Error): Partial<State> {
+  static getDerivedStateFromError(error: Error): State {
     return { error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("[dashboard] render error", error, info.componentStack);
+    console.error("[ui] render error", error, info.componentStack);
   }
 
   render() {
     if (this.state.error) {
       return (
         <div className="app loading">
-          <h1>看板渲染失败</h1>
-          <p className="nas-error">{this.state.error.message}</p>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={() => this.setState((s) => ({ error: null, retryKey: s.retryKey + 1 }))}
-          >
+          <p>界面渲染出错：{this.state.error.message}</p>
+          <button type="button" className="btn primary" onClick={() => this.setState({ error: null })}>
             重试
           </button>
         </div>
       );
     }
-    return <div key={this.state.retryKey}>{this.props.children}</div>;
+    return this.props.children;
   }
 }

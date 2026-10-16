@@ -4,7 +4,7 @@ import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import { handleConfigRequest } from "./env-config-api.js";
 import { getCardLayoutFile, handleCardLayoutRequest } from "./card-layout-api.js";
-import { runCheckinIfDue, startDailyCheckinScheduler } from "./fetch-checkin.js";
+import { runCheckinIfDue, runCheckinForce, startDailyCheckinScheduler } from "./fetch-checkin.js";
 import {
   isFetchRunning,
   setOnChangeFetchComplete,
@@ -14,8 +14,12 @@ import {
   type FetchSlot,
 } from "./fetch-server.js";
 import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
-import { getFetchLogSnapshot } from "./fetch-log.js";
-
+import { appendFetchLog, getFetchLogSnapshot } from "./fetch-log.js";
+import { applyQuickAuth } from "./quick-auth.js";
+import { amapReverseGeocode, isAmapGeocodeConfigured } from "./amap-geocode.js";
+import { getStorageFilesSnapshot } from "./storage-files.js";
+import { handleStockWatchRequest, setStockWatchSchedulerHooks } from "./stock-watch-api.js";
+import { startStockWatchScheduler } from "./stock-watch.js";
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -97,6 +101,13 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     ? startDailyCheckinScheduler(notify)
     : null;
 
+  const stockWatchScheduler = opts.enableScheduler
+    ? startStockWatchScheduler({ onComplete: notify })
+    : null;
+  if (stockWatchScheduler) {
+    setStockWatchSchedulerHooks({ reschedule: stockWatchScheduler.reschedule });
+  }
+
   if (opts.enableScheduler) {
     setOnVehicleFetchComplete(() => {
       notify();
@@ -114,6 +125,7 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     const pathname = url.split("?")[0];
 
     void (async () => {
+      try {
       if (pathname === "/health") {
         json(res, 200, { ok: true, running: isFetchRunning(), at: Date.now() });
         return;
@@ -122,6 +134,93 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       if (pathname === "/api/fetch-log" || pathname === "/fetch-log") {
         noCache(res);
         json(res, 200, getFetchLogSnapshot(isFetchRunning()));
+        return;
+      }
+
+      if (pathname === "/api/storage-files") {
+        noCache(res);
+        json(res, 200, getStorageFilesSnapshot(opts.dataDir, opts.envFile));
+        return;
+      }
+
+      if (await handleStockWatchRequest(req, res, pathname, method)) {
+        return;
+      }
+
+      if (pathname === "/api/quick-auth" && method === "POST") {
+        noCache(res);
+        let text = "";
+        try {
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) chunks.push(chunk as Buffer);
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as { text?: unknown };
+          text = typeof body.text === "string" ? body.text : "";
+        } catch {
+          json(res, 400, { ok: false, error: "请求格式不对" });
+          return;
+        }
+        if (!text.trim()) {
+          json(res, 400, { ok: false, error: "请粘贴 Bearer Token、抓包原文或选择 HAR 文件" });
+          return;
+        }
+        const result = applyQuickAuth(text);
+        if (!result.ok) {
+          json(res, 400, { ok: false, error: result.warnings.join("；") || "没有可用的内容", result });
+          return;
+        }
+        appendFetchLog(
+          "vehicle",
+          "info",
+          `快速更新 · ${[
+            result.tokenUpdated ? "Token" : null,
+            ...result.updated,
+            result.power ? `加电 ${result.power}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}`,
+        );
+        const runs: Record<string, string> = {};
+        for (const slot of ["vehicle", "change"] as const) {
+          try {
+            await triggerFetch(slot);
+            runs[slot] = "ok";
+          } catch (err) {
+            runs[slot] = err instanceof Error ? err.message : String(err);
+          }
+        }
+        scheduler?.rescheduleChange(false);
+        notify();
+        json(res, 200, { ok: true, result, runs });
+        return;
+      }
+
+      if (pathname === "/api/geocode/reverse" && method === "GET") {
+        noCache(res);
+        const query = new URL(url, "http://local").searchParams;
+        const lat = Number(query.get("lat"));
+        const lng = Number(query.get("lng"));
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          json(res, 400, { ok: false, error: "invalid_lat_lng" });
+          return;
+        }
+
+        const key = process.env.NIO_AMAP_WEB_SERVICE_KEY?.trim();
+        if (!isAmapGeocodeConfigured(process.env as Record<string, string>)) {
+          json(res, 404, { ok: false, error: "amap_not_configured" });
+          return;
+        }
+
+        try {
+          const address = await amapReverseGeocode(lng, lat, key!);
+          if (!address) {
+            json(res, 502, { ok: false, error: "amap_geocode_failed" });
+            return;
+          }
+          json(res, 200, { ok: true, provider: "amap", address });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          json(res, 500, { ok: false, error: message });
+        }
         return;
       }
 
@@ -170,6 +269,17 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       if ((pathname === "/trigger/change" || pathname === "/api/fetch-change") && method === "POST") {
         slot = "change";
       }
+      if ((pathname === "/trigger/checkin" || pathname === "/api/fetch-checkin") && method === "POST") {
+        try {
+          await runCheckinForce();
+          notify();
+          json(res, 200, { ok: true, target: "checkin", at: Date.now() });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          json(res, 500, { ok: false, target: "checkin", error: message });
+        }
+        return;
+      }
 
       if (slot) {
         try {
@@ -201,16 +311,42 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       if (!serveFile(res, filePath)) {
         json(res, 404, { ok: false, error: "not_found" });
       }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[app-server]", pathname, method, message);
+        if (!res.headersSent) {
+          json(res, 500, { ok: false, error: "internal_error" });
+        }
+      }
     })();
   });
 
+  const preferredPort = opts.port ?? 0;
+  let port = preferredPort;
+
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(opts.port ?? 0, host, () => resolve());
+    const onError = (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE" && preferredPort !== 0) {
+        server.removeListener("error", onError);
+        server.listen(0, host, () => resolve());
+        return;
+      }
+      reject(err);
+    };
+    server.once("error", onError);
+    server.listen(preferredPort, host, () => {
+      server.removeListener("error", onError);
+      resolve();
+    });
   });
 
   const addr = server.address();
-  const port = typeof addr === "object" && addr ? addr.port : Number(opts.port ?? 8787);
+  port = typeof addr === "object" && addr ? addr.port : port;
+  if (port !== preferredPort) {
+    console.warn(`[app-server] 端口 ${preferredPort} 被占用，改用 ${port}`);
+  }
+
+  console.log(`[app-server] started on ${host}:${port}`);
 
   return {
     port,
@@ -220,6 +356,7 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
         setOnChangeFetchComplete(null);
         scheduler?.stop();
         checkinScheduler?.stop();
+        stockWatchScheduler?.stop();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
     reschedule: () => scheduler?.reschedule(),

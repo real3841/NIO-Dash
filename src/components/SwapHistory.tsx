@@ -20,11 +20,104 @@ interface Props {
   data: ChangeResponse;
 }
 
+function OrderTableSection({
+  summary,
+  filteredOrders,
+  typeFilter,
+  setTypeFilter,
+  expandedNo,
+  setExpandedNo,
+}: {
+  summary: ReturnType<typeof analyzeServiceOrders>;
+  filteredOrders: ReturnType<typeof analyzeServiceOrders>["orders"];
+  typeFilter: string;
+  setTypeFilter: (v: string) => void;
+  expandedNo: string | null;
+  setExpandedNo: (v: string | null) => void;
+}) {
+  return (
+    <div className="order-table-section">
+      <div className="order-type-chips order-type-chips-in-card">
+        <button
+          type="button"
+          className={`order-type-chip ${typeFilter === "all" ? "order-type-chip-active" : ""}`}
+          onClick={() => setTypeFilter("all")}
+        >
+          全部 {summary.total}
+        </button>
+        {summary.byType.map((t) => (
+          <button
+            key={t.type}
+            type="button"
+            className={`order-type-chip ${typeFilter === t.type ? "order-type-chip-active" : ""}`}
+            onClick={() => setTypeFilter(t.type)}
+          >
+            {t.label} {t.count}
+          </button>
+        ))}
+      </div>
+      <div className="swap-table-wrap">
+        <table className="swap-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>类型</th>
+              <th>地点 / 详情</th>
+              <th>状态</th>
+              <th>金额</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredOrders.map((order) => {
+              const expanded = expandedNo === order.orderNo;
+              const details = orderDetailLines(order);
+              return (
+                <Fragment key={order.orderNo}>
+                  <tr
+                    className="swap-table-row-clickable"
+                    onClick={() => setExpandedNo(expanded ? null : order.orderNo)}
+                  >
+                    <td>{fmtSwapDate(order.createTime)}</td>
+                    <td>
+                      <StatusPill tone="neutral">{orderTypeLabel(order)}</StatusPill>
+                    </td>
+                    <td className="swap-table-station">{orderLocation(order)}</td>
+                    <td>
+                      <StatusPill tone={orderStatusTone(order)}>{order.orderStatusName}</StatusPill>
+                    </td>
+                    <td className="swap-table-price">{orderAmount(order)}</td>
+                  </tr>
+                  {expanded && details.length > 0 && (
+                    <tr className="swap-table-detail-row">
+                      <td colSpan={5}>
+                        <div className="order-detail-grid">
+                          {details.map((d) => (
+                            <div key={`${order.orderNo}-${d.label}-${d.value}`} className="order-detail-item">
+                              <span className="order-detail-label">{d.label}</span>
+                              <span className="order-detail-value">{d.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted swap-table-hint">点击行可展开更多订单详情</p>
+    </div>
+  );
+}
+
 export function SwapHistory({ data }: Props) {
   const [layout, updateLayout] = useCardLayout("orders", ORDER_CARDS);
   const summary = useMemo(() => analyzeServiceOrders(data), [data]);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [expandedNo, setExpandedNo] = useState<string | null>(null);
+  const [ordersOpen, setOrdersOpen] = useState(false);
 
   const filteredOrders = useMemo(() => {
     if (typeFilter === "all") return summary.orders;
@@ -129,128 +222,54 @@ export function SwapHistory({ data }: Props) {
           </DashCard>
         );
 
-      case "order_table":
-        return (
-          <DashCard
-            className="dash-card-wide order-table-card"
-            icon={<IconSwap />}
-            title="全部订单"
-            badge={
-              <StatusPill tone="neutral">
-                {filteredOrders.length}
-                {typeFilter !== "all" ? ` / ${summary.total}` : ""} 笔
-              </StatusPill>
-            }
-            {...chrome}
-          >
-            <details className="order-table-details">
-              <summary className="order-table-summary">
-                <span>订单表格</span>
-                <span className="drawer-summary-meta">
-                  {filteredOrders.length}
-                  {typeFilter !== "all" ? ` / ${summary.total}` : ""} 笔 · 点击展开
-                </span>
-              </summary>
-              <div className="order-table-details-body">
-                <div className="order-type-chips order-type-chips-in-card">
-                  <button
-                    type="button"
-                    className={`order-type-chip ${typeFilter === "all" ? "order-type-chip-active" : ""}`}
-                    onClick={() => setTypeFilter("all")}
-                  >
-                    全部 {summary.total}
-                  </button>
-                  {summary.byType.map((t) => (
-                    <button
-                      key={t.type}
-                      type="button"
-                      className={`order-type-chip ${typeFilter === t.type ? "order-type-chip-active" : ""}`}
-                      onClick={() => setTypeFilter(t.type)}
-                    >
-                      {t.label} {t.count}
-                    </button>
-                  ))}
-                </div>
-                <div className="swap-table-wrap">
-                  <table className="swap-table">
-                    <thead>
-                      <tr>
-                        <th>时间</th>
-                        <th>类型</th>
-                        <th>地点 / 详情</th>
-                        <th>状态</th>
-                        <th>金额</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredOrders.map((order) => {
-                        const expanded = expandedNo === order.orderNo;
-                        const details = orderDetailLines(order);
-                        return (
-                          <Fragment key={order.orderNo}>
-                            <tr
-                              className="swap-table-row-clickable"
-                              onClick={() => setExpandedNo(expanded ? null : order.orderNo)}
-                            >
-                              <td>{fmtSwapDate(order.createTime)}</td>
-                              <td>
-                                <StatusPill tone="neutral">{orderTypeLabel(order)}</StatusPill>
-                              </td>
-                              <td className="swap-table-station">{orderLocation(order)}</td>
-                              <td>
-                                <StatusPill tone={orderStatusTone(order)}>{order.orderStatusName}</StatusPill>
-                              </td>
-                              <td className="swap-table-price">{orderAmount(order)}</td>
-                            </tr>
-                            {expanded && details.length > 0 && (
-                              <tr className="swap-table-detail-row">
-                                <td colSpan={5}>
-                                  <div className="order-detail-grid">
-                                    {details.map((d) => (
-                                      <div key={`${order.orderNo}-${d.label}-${d.value}`} className="order-detail-item">
-                                        <span className="order-detail-label">{d.label}</span>
-                                        <span className="order-detail-value">{d.value}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="muted swap-table-hint">点击行可展开更多订单详情</p>
-              </div>
-            </details>
-          </DashCard>
-        );
-
       default:
         return null;
     }
   };
 
+  const typeSummary =
+    summary.byType.length > 0 ? summary.byType.map((t) => `${t.label} ${t.count}`).join(" · ") : "";
+
   return (
     <section className="swap-section">
-      <div className="swap-section-head">
-        <h2>服务订单</h2>
-        <p className="muted">
-          来自 change.json · 共 {summary.total} 笔
-          {summary.byType.length > 0 &&
-            ` · ${summary.byType.map((t) => `${t.label} ${t.count}`).join(" · ")}`}
-        </p>
-      </div>
-
-      <SortableCardGrid
-        layout={effectiveLayout}
-        onLayoutChange={onLayoutChange}
-        className="dash-grid swap-grid"
+      <button
+        type="button"
+        className={`swap-section-toggle${ordersOpen ? " open" : ""}`}
+        aria-expanded={ordersOpen}
+        onClick={() => setOrdersOpen((v) => !v)}
       >
-        {renderCard}
-      </SortableCardGrid>
+        <span className="swap-section-toggle-main">
+          <h2>服务订单</h2>
+          <span className="muted">
+            共 {summary.total} 笔
+            {typeSummary ? ` · ${typeSummary}` : ""}
+          </span>
+        </span>
+        <span className="drawer-summary-meta">{ordersOpen ? "收起" : "全部订单"}</span>
+      </button>
+
+      {ordersOpen && (
+        <div className="swap-section-body">
+          <p className="muted swap-section-source">来自 change.json</p>
+
+          <SortableCardGrid
+            layout={effectiveLayout}
+            onLayoutChange={onLayoutChange}
+            className="dash-grid swap-grid"
+          >
+            {renderCard}
+          </SortableCardGrid>
+
+          <OrderTableSection
+            summary={summary}
+            filteredOrders={filteredOrders}
+            typeFilter={typeFilter}
+            setTypeFilter={setTypeFilter}
+            expandedNo={expandedNo}
+            setExpandedNo={setExpandedNo}
+          />
+        </div>
+      )}
     </section>
   );
 }

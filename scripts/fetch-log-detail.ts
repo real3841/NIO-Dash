@@ -179,16 +179,19 @@ export function changeErrorDetail(
   return withApiRequest(detail, apiRequest);
 }
 
+import { extractCheckinFields } from "../src/lib/checkin.js";
+
 export function checkinSuccessDetail(
   payload: Record<string, unknown>,
   apiRequest?: ApiRequestInfo | null,
 ): Record<string, unknown> {
+  const extracted = extractCheckinFields(payload);
   return withApiRequest(
     {
       kind: "checkin",
       result: "success",
-      checkedIn: payload.checked_in === true,
-      continuousDays: payload.continuous_days ?? null,
+      checkedIn: extracted?.checked_in === true,
+      continuousDays: extracted?.continuous_days ?? payload.continuous_days ?? null,
       accumulateDays: payload.accumulate_days ?? null,
       todayChecked: payload.today_checked ?? null,
       rawResponse: payload,

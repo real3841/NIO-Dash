@@ -8,9 +8,13 @@ import {
 } from "../lib/date-utils";
 import type { VehicleSnapshot } from "../lib/vehicle";
 import { fmtTime } from "../lib/vehicle";
+import type { DailyHistory } from "../lib/trip";
+import type { PowerFile } from "../lib/power";
 
 interface TrendChartsProps {
   history: VehicleSnapshot[];
+  dailyHistory?: DailyHistory;
+  power?: PowerFile | null;
 }
 
 const BATTERY_PRESET_DAYS = [1, 3] as const;
@@ -249,10 +253,18 @@ function dailyDeltaTimestamp(day: string): number {
   return start + 12 * 60 * 60 * 1000;
 }
 
-function formatDailyChartCaption(dayCount: number, totalDelta: number, startDate: string, endDate: string): string {
+function formatDailyChartCaption(
+  dayCount: number,
+  totalDelta: number,
+  startDate: string,
+  endDate: string,
+  unit = " km",
+  signed = true,
+): string {
   if (dayCount === 0) return `${startDate} — ${endDate} 暂无数据`;
-  const sign = totalDelta >= 0 ? "+" : "";
-  return `${dayCount} 天 · 累计 ${sign}${totalDelta} km`;
+  const sign = signed && totalDelta >= 0 ? "+" : "";
+  const shown = signed ? String(totalDelta) : totalDelta.toFixed(1);
+  return `${dayCount} 天 · 累计 ${sign}${shown}${unit}`;
 }
 
 function formatWindowLabel(ts: number, dailyMileage: boolean): string {
@@ -312,6 +324,9 @@ function MiniChart({
   defaultPreset = presetOptions[0],
   color,
   history,
+  dailyOverrides,
+  dailyPoints,
+  rangeSum = false,
 }: {
   title: string;
   unit: string;
@@ -323,6 +338,12 @@ function MiniChart({
   defaultPreset?: number;
   color: string;
   history: VehicleSnapshot[];
+  /** 当日里程接口按天记下的值，有就优先用 */
+  dailyOverrides?: DailyHistory;
+  /** 按天的独立序列，例如家充每日电量 */
+  dailyPoints?: { day: string; value: number }[];
+  /** 标题和说明显示区间累计，而不是最后一个点 */
+  rangeSum?: boolean;
 }) {
   const today = localDayKey();
   const defaultRange = presetDateRange(defaultPreset);
@@ -331,10 +352,13 @@ function MiniChart({
   const [startDate, setStartDate] = useState(defaultRange.start);
   const [endDate, setEndDate] = useState(defaultRange.end);
 
+  const byDay = dailyMileage || rangeSum;
+
   const minDate = useMemo(() => {
+    if (dailyPoints && dailyPoints.length > 0) return dailyPoints.reduce((min, p) => (p.day < min ? p.day : min), dailyPoints[0].day);
     if (history.length === 0) return today;
     return localDayKey(Math.min(...history.map((p) => p.ts)));
-  }, [history, today]);
+  }, [dailyPoints, history, today]);
 
   const { points: series, effectiveStart } = useMemo(
     () => filterForDateRange(history, startDate, endDate),
@@ -342,22 +366,37 @@ function MiniChart({
   );
 
   const { values, timestamps } = useMemo(() => {
-    if (dailyMileage) {
-      const deltas = computeDailyMileageDeltas(series);
+    if (dailyPoints) {
+      const [lo, hi] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+      const rows = dailyPoints.filter((p) => p.day >= lo && p.day <= hi).sort((a, b) => a.day.localeCompare(b.day));
       return {
-        values: deltas.map((item) => item.delta),
-        timestamps: deltas.map((item) => dailyDeltaTimestamp(item.day)),
+        values: rows.map((p) => p.value),
+        timestamps: rows.map((p) => dailyDeltaTimestamp(p.day)),
+      };
+    }
+    if (dailyMileage) {
+      const byDay = new Map(computeDailyMileageDeltas(series).map((item) => [item.day, item.delta]));
+      const [lo, hi] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+      for (const [day, entry] of Object.entries(dailyOverrides ?? {})) {
+        if (day >= lo && day <= hi && Number.isFinite(entry.daily_mileage)) {
+          byDay.set(day, Math.round(entry.daily_mileage * 10) / 10);
+        }
+      }
+      const deltas = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      return {
+        values: deltas.map(([, delta]) => delta),
+        timestamps: deltas.map(([day]) => dailyDeltaTimestamp(day)),
       };
     }
     return {
       values: series.map((p) => pickValue!(p)),
       timestamps: series.map((p) => p.ts),
     };
-  }, [series, dailyMileage, pickValue]);
+  }, [series, dailyMileage, pickValue, dailyOverrides, dailyPoints, startDate, endDate]);
 
   const totalDelta = useMemo(
-    () => (dailyMileage ? values.reduce((sum, value) => sum + value, 0) : 0),
-    [dailyMileage, values],
+    () => (dailyMileage || rangeSum ? values.reduce((sum, value) => sum + value, 0) : 0),
+    [dailyMileage, rangeSum, values],
   );
 
   const [hovered, setHovered] = useState<number | null>(null);
@@ -431,7 +470,9 @@ function MiniChart({
   const last = values[values.length - 1];
   const rangeCaption = dailyMileage
     ? formatDailyChartCaption(values.length, totalDelta, startDate, endDate)
-    : formatRangeCaption(timestamps, startDate, endDate, effectiveStart);
+    : rangeSum
+      ? formatDailyChartCaption(values.length, totalDelta, startDate, endDate, unit, false)
+      : formatRangeCaption(timestamps, startDate, endDate, effectiveStart);
   const extraCaption = footerCaption?.(series) ?? "";
   const active = hovered !== null ? points[hovered] : null;
   const canZoom = points.length > 1;
@@ -500,11 +541,15 @@ function MiniChart({
       <div className="mini-chart-head">
         <span>{title}</span>
         <strong>
-          {dailyMileage
+          {rangeSum
             ? values.length > 0
-              ? `${totalDelta >= 0 ? "+" : ""}${totalDelta} km`
+              ? `${totalDelta.toFixed(1)}${unit}`
               : "—"
-            : `${last ?? "—"}${unit}`}
+            : dailyMileage
+              ? values.length > 0
+                ? `${totalDelta >= 0 ? "+" : ""}${totalDelta} km`
+                : "—"
+              : `${last ?? "—"}${unit}`}
         </strong>
       </div>
       <div className="mini-chart-range" role="group" aria-label={`${title}时间范围`}>
@@ -615,16 +660,18 @@ function MiniChart({
                 className={`mini-chart-tooltip${tooltip.below ? " below" : ""} align-${tooltip.align}`}
                 style={{ left: tooltip.left, top: tooltip.top }}
               >
-                {dailyMileage
-                  ? `${formatDayZh(localDayKey(active.ts))} · ${formatDeltaValue(active.value)}`
+                {byDay
+                  ? rangeSum
+                    ? `${formatDayZh(localDayKey(active.ts))} · ${active.value.toFixed(1)}${unit}`
+                    : `${formatDayZh(localDayKey(active.ts))} · ${formatDeltaValue(active.value)}`
                   : `${fmtTime(active.ts)} · ${active.value}${unit.trim()}`}
               </div>
             </div>
           )}
         </div>
       <div className="mini-chart-labels">
-        <span>{windowLabels.start !== null ? formatWindowLabel(windowLabels.start, dailyMileage) : "—"}</span>
-        <span>{windowLabels.end !== null ? formatWindowLabel(windowLabels.end, dailyMileage) : ""}</span>
+        <span>{windowLabels.start !== null ? formatWindowLabel(windowLabels.start, byDay) : "—"}</span>
+        <span>{windowLabels.end !== null ? formatWindowLabel(windowLabels.end, byDay) : ""}</span>
       </div>
       {zoom > ZOOM_MIN && maxPan > minPan && (
         <label className="mini-chart-pan-wrap" title="左右拖动查看">
@@ -677,7 +724,7 @@ function MiniChart({
   );
 }
 
-export function TrendCharts({ history }: TrendChartsProps) {
+export function TrendCharts({ history, dailyHistory, power }: TrendChartsProps) {
   return (
     <div className="trend-grid">
       <MiniChart
@@ -696,6 +743,7 @@ export function TrendCharts({ history }: TrendChartsProps) {
         defaultPreset={7}
         color="#3b82f6"
         history={history}
+        dailyOverrides={dailyHistory}
       />
       <MiniChart
         title="总里程"
@@ -706,6 +754,28 @@ export function TrendCharts({ history }: TrendChartsProps) {
         color="#8b5cf6"
         history={history}
       />
+      <MiniChart
+        title="家充"
+        unit=" kWh"
+        rangeSum
+        presetOptions={MILEAGE_PRESET_DAYS}
+        defaultPreset={15}
+        color="#f59e0b"
+        history={[]}
+        dailyPoints={powerDailyPoints(power)}
+      />
     </div>
   );
+}
+
+function powerDailyPoints(power?: PowerFile | null): { day: string; value: number }[] {
+  const rows: { day: string; value: number }[] = [];
+  for (const month of Object.values(power?.months ?? {})) {
+    for (const report of month.reports) {
+      if (!report.date) continue;
+      rows.push({ day: report.date, value: Math.round(report.real_charge_kwh * 10) / 10 });
+    }
+  }
+  rows.sort((a, b) => a.day.localeCompare(b.day));
+  return rows;
 }

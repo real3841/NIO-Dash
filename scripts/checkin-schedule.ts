@@ -13,6 +13,7 @@ interface CheckinMeta {
   at?: number;
   error?: string | null;
   run_day?: string;
+  source?: string | null;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -18,7 +18,10 @@ let memoryCache: Partial<Record<CardSection, CardLayoutState>> | null = null;
 
 export const VEHICLE_CARDS: CardDef[] = [
   { id: "battery", label: "电池", description: "电量、续航、里程" },
+  { id: "daily_mileage", label: "当日里程", description: "今天行驶、累计里程、激活天数" },
+  { id: "recent_journey", label: "最近行程", description: "最近一段行程的起终点和用时" },
   { id: "charging", label: "充电详情", description: "充电功率、电流、电压、限充" },
+  { id: "home_charger", label: "家充桩", description: "家充桩在线、枪状态、预约、上次充电" },
   { id: "doors_visual", label: "车门", description: "车门示意、上锁状态" },
   { id: "window", label: "车窗", description: "四窗开度、天窗、后视镜" },
   { id: "tyre", label: "轮胎", description: "四轮胎压与胎温" },
@@ -28,6 +31,8 @@ export const VEHICLE_CARDS: CardDef[] = [
   { id: "exterior_detail", label: "行驶 / 泊车", description: "驾驶模式、遥控泊车等" },
   { id: "seat_heat", label: "座椅加热", description: "方向盘/座椅/通风/预热" },
   { id: "connection", label: "连接状态", description: "签到、CDC/ADC、在线状态" },
+  { id: "stock_swap", label: "换电订单", description: "监控蔚来换电券是否有货并提醒" },
+  { id: "stock_drive", label: "驾享订单", description: "监控蔚来驾享服务券是否有货并提醒" },
   { id: "temperature", label: "温度 / 空调", description: "车内/车外温度与空调扩展" },
   { id: "maintain", label: "维保", description: "维保状态与待办" },
   { id: "light", label: "灯光", description: "大灯、示宽灯、日行灯" },
@@ -49,18 +54,18 @@ export const ORDER_CARDS: CardDef[] = [
   { id: "order_overview", label: "订单概览", description: "总数与分类" },
   { id: "swap_stats", label: "换电统计", description: "花费与完成次数" },
   { id: "top_stations", label: "常用换电站", description: "Top 换电站" },
-  { id: "order_table", label: "全部订单", description: "订单列表表格" },
 ];
 
 function defaultLayout(defs: CardDef[]): CardLayoutState {
   return { order: defs.map((d) => d.id), hidden: [] };
 }
 
-const REMOVED_CARD_IDS = new Set(["doors_toggle"]);
+const REMOVED_CARD_IDS = new Set(["doors_toggle", "order_table"]);
 
-function normalizeCardId(id: string): string | null {
-  if (REMOVED_CARD_IDS.has(id)) return null;
-  return id;
+function normalizeCardId(id: string): string[] {
+  if (REMOVED_CARD_IDS.has(id)) return [];
+  if (id === "stock_watch") return ["stock_swap", "stock_drive"];
+  return [id];
 }
 
 function mergeLayout(defs: CardDef[], saved: Partial<CardLayoutState> | null): CardLayoutState {
@@ -70,18 +75,28 @@ function mergeLayout(defs: CardDef[], saved: Partial<CardLayoutState> | null): C
   const validIds = new Set(defs.map((d) => d.id));
   const order: string[] = [];
   for (const id of saved.order ?? []) {
-    const norm = normalizeCardId(id);
-    if (norm && validIds.has(norm) && !order.includes(norm)) order.push(norm);
+    for (const norm of normalizeCardId(id)) {
+      if (validIds.has(norm) && !order.includes(norm)) order.push(norm);
+    }
   }
   for (const def of defs) {
-    if (!order.includes(def.id)) order.push(def.id);
+    if (order.includes(def.id)) continue;
+    const afterBattery = order.indexOf("battery");
+    if ((def.id === "daily_mileage" || def.id === "recent_journey") && afterBattery >= 0) {
+      const insertAt = def.id === "daily_mileage" ? afterBattery + 1 : order.indexOf("daily_mileage") + 1;
+      order.splice(insertAt > 0 ? insertAt : afterBattery + 1, 0, def.id);
+    } else if (def.id === "home_charger" && order.includes("charging")) {
+      order.splice(order.indexOf("charging") + 1, 0, def.id);
+    } else {
+      order.push(def.id);
+    }
   }
 
   const hidden = [
     ...new Set(
       (saved.hidden ?? [])
-        .map(normalizeCardId)
-        .filter((id): id is string => id != null && validIds.has(id) && order.includes(id)),
+        .flatMap(normalizeCardId)
+        .filter((id) => validIds.has(id) && order.includes(id)),
     ),
   ];
   return { order, hidden };

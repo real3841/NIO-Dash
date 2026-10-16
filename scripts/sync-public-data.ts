@@ -17,6 +17,8 @@ export function syncPublicData(): void {
     "last-fetch-change.json",
     "checkin.json",
     "last-fetch-checkin.json",
+    "journey.json",
+    "daily.json",
   ]) {
     const src = path.join(srcDir, name);
     if (fs.existsSync(src)) {

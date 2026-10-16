@@ -67,15 +67,7 @@ export function extractCheckinFields(raw: unknown): Pick<CheckinData, "checked_i
 export function normalizeCheckinData(raw: unknown): CheckinData | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
-
-  const extracted =
-    record.checked_in !== undefined || record.continuous_days !== undefined
-      ? {
-          checked_in: parseCheckedIn(record.checked_in) ?? false,
-          continuous_days: parseDays(record.continuous_days) ?? 0,
-        }
-      : extractCheckinFields(raw);
-
+  const extracted = extractCheckinFields(raw);
   if (!extracted) return null;
 
   return {

@@ -23,10 +23,14 @@ export function writeEnvFileRaw(content: string): void {
 
 export function parseEnvValue(raw: string): string {
   const trimmed = raw.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+    return trimmed
+      .slice(1, -1)
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
@@ -88,16 +92,27 @@ export function applyEnvUpdates(content: string, updates: Record<string, string>
 export const VEHICLE_ENV_KEYS = [
   "NIO_VEHICLE_API_URL",
   "NIO_VEHICLE_ACCESS_TOKEN",
+  "NIO_VEHICLE_USER_AGENT",
+  "NIO_VEHICLE_API_METHOD",
   "NIO_VEHICLE_POLL_DRIVING_SEC",
   "NIO_VEHICLE_POLL_DAY_SEC",
   "NIO_VEHICLE_POLL_NIGHT_SEC",
   "NIO_CHECKIN_API_URL",
   "NIO_CHECKIN_ACCESS_TOKEN",
+  "NIO_VEHICLE_STATUS_URL",
+  "NIO_JOURNEY_API_URL",
+  "NIO_DAILY_API_URL",
+  "NIO_VEHICLE_EXTRA_TOKEN",
 ] as const;
 
 export const CHANGE_ENV_KEYS = [
   "NIO_CHANGE_API_URL",
   "NIO_CHANGE_ACCESS_TOKEN",
+  "NIO_CHANGE_USER_AGENT",
+  "NIO_CHANGE_MOBILEINFO",
+  "NIO_CHANGE_API_METHOD",
+  "NIO_CHANGE_API_BODY",
+  "NIO_CHANGE_API_MODE",
   "NIO_CHANGE_POLL_INTERVAL",
 ] as const;
 
@@ -105,9 +120,16 @@ export const GENERAL_ENV_KEYS = ["NIO_POLL_INTERVAL", "WEB_PORT", "NIO_TRAY_DISP
 
 export const TRAY_ENV_KEYS = ["NIO_TRAY_DISPLAY"] as const;
 
+export const MAP_ENV_KEYS = [
+  "NIO_AMAP_WEB_SERVICE_KEY",
+  "NIO_AMAP_JS_KEY",
+  "NIO_AMAP_JS_SECURITY_CODE",
+] as const;
+
 export type VehicleEnv = Record<(typeof VEHICLE_ENV_KEYS)[number], string>;
 export type ChangeEnv = Record<(typeof CHANGE_ENV_KEYS)[number], string>;
 export type GeneralEnv = Record<(typeof GENERAL_ENV_KEYS)[number], string>;
+export type MapEnv = Record<(typeof MAP_ENV_KEYS)[number], string>;
 
 function pickKeys(all: Record<string, string>, keys: readonly string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -117,12 +139,18 @@ function pickKeys(all: Record<string, string>, keys: readonly string[]): Record<
   return out;
 }
 
-export function loadEnvSections(): { vehicle: VehicleEnv; change: ChangeEnv; general: GeneralEnv } {
+export function loadEnvSections(): {
+  vehicle: VehicleEnv;
+  change: ChangeEnv;
+  general: GeneralEnv;
+  map: MapEnv;
+} {
   const all = parseEnvFile(readEnvFileRaw());
   return {
     vehicle: pickKeys(all, VEHICLE_ENV_KEYS) as VehicleEnv,
     change: pickKeys(all, CHANGE_ENV_KEYS) as ChangeEnv,
     general: pickKeys(all, GENERAL_ENV_KEYS) as GeneralEnv,
+    map: pickKeys(all, MAP_ENV_KEYS) as MapEnv,
   };
 }
 

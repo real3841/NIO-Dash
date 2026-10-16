@@ -3,11 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   getChangePollIntervalSec,
-  getVehiclePollIntervalSec,
+  getVehiclePollInfo,
   parseEnvFromFile,
-  vehiclePollLabel,
-  vehiclePollReason,
-  readVehicleState,
 } from "../scripts/poll-interval.js";
 import { readTrayStatus } from "./status.js";
 
@@ -73,43 +70,46 @@ export function createTrayController(opts: TrayControllerOptions): TrayControlle
   };
 
   const update = () => {
-    const env = loadEnvFromFile(opts.envFile);
-    const vehiclePollSec = getVehiclePollIntervalSec(env, opts.dataDir);
-    const changePollSec = getChangePollIntervalSec(env);
-    const pollReason = vehiclePollReason(readVehicleState(opts.dataDir));
-    const status = readTrayStatus(opts.dataDir, opts.envFile);
-    if (process.platform === "darwin") {
-      tray.setTitle(status.title);
-    }
-    tray.setToolTip(status.tooltip);
+    try {
+      const env = loadEnvFromFile(opts.envFile);
+      const vehiclePoll = getVehiclePollInfo(env, opts.dataDir);
+      const changePollSec = getChangePollIntervalSec(env);
+      const status = readTrayStatus(opts.dataDir, opts.envFile);
+      if (process.platform === "darwin") {
+        tray.setTitle(status.title);
+      }
+      tray.setToolTip(status.tooltip);
 
-    const menu = Menu.buildFromTemplate([
-      { label: status.title, enabled: false },
-      { type: "separator" },
-      {
-        label: "立即刷新（车辆 + 换电）",
-        click: () => void refreshMenu(),
-      },
-      {
-        label: "打开看板",
-        click: () => opts.onShowWindow(),
-      },
-      { type: "separator" },
-      {
-        label: `车辆拉取：${vehiclePollLabel(pollReason)} · ${fmtPollSec(vehiclePollSec)}`,
-        enabled: false,
-      },
-      {
-        label: `换电拉取：每 ${fmtPollSec(changePollSec)}`,
-        enabled: false,
-      },
-      { type: "separator" },
-      {
-        label: "退出",
-        click: () => opts.onQuit(),
-      },
-    ]);
-    tray.setContextMenu(menu);
+      const menu = Menu.buildFromTemplate([
+        { label: status.title, enabled: false },
+        { type: "separator" },
+        {
+          label: "立即刷新（车辆 + 换电）",
+          click: () => void refreshMenu(),
+        },
+        {
+          label: "打开看板",
+          click: () => opts.onShowWindow(),
+        },
+        { type: "separator" },
+        {
+          label: `车辆拉取：${vehiclePoll.reasonLabel} · ${fmtPollSec(vehiclePoll.intervalSec)}`,
+          enabled: false,
+        },
+        {
+          label: `换电拉取：每 ${fmtPollSec(changePollSec)}`,
+          enabled: false,
+        },
+        { type: "separator" },
+        {
+          label: "退出",
+          click: () => opts.onQuit(),
+        },
+      ]);
+      tray.setContextMenu(menu);
+    } catch (err) {
+      console.error("[tray] update failed", err);
+    }
   };
 
   tray.on("click", () => opts.onShowWindow());

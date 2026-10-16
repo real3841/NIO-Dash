@@ -44,12 +44,29 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => "/trigger/change",
       },
+      "/api/fetch-checkin": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+        rewrite: () => "/trigger/checkin",
+      },
       "/api/fetch-log": {
         target: "http://127.0.0.1:8787",
         changeOrigin: true,
         rewrite: () => "/fetch-log",
       },
       "/api/card-layout": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
+      "/api/geocode": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
+      "/api/stock-watch": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
+      "/api/quick-auth": {
         target: "http://127.0.0.1:8787",
         changeOrigin: true,
       },

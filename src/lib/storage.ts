@@ -1,4 +1,13 @@
 import type { ChangeResponse } from "./change";
+import {
+  isDailyFile,
+  isJourneyFile,
+  type DailyFile,
+  type DailyHistory,
+  type JourneyFile,
+  type JourneyHistoryItem,
+} from "./trip";
+import { isPowerFile, type PowerFile } from "./power";
 import type { CheckinData } from "./checkin";
 import { normalizeCheckinData } from "./checkin";
 import type { VehicleResponse, VehicleSnapshot } from "./vehicle";
@@ -12,6 +21,7 @@ export interface FetchMeta {
   ok: boolean;
   at: number;
   error: string | null;
+  errorKind?: "sign" | "auth" | "generic" | null;
 }
 
 async function readJsonResponse<T>(res: Response, label: string): Promise<T> {
@@ -48,7 +58,11 @@ export function loadHistory(): VehicleSnapshot[] {
 }
 
 export function saveHistory(history: VehicleSnapshot[]): void {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (err) {
+    console.warn("[dashboard] 无法写入本地历史缓存:", err);
+  }
 }
 
 export interface VehicleDataResult {
@@ -64,7 +78,7 @@ export async function fetchVehicleData(): Promise<VehicleDataResult> {
     }
     const normalized = normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
     if (!isUsableVehicleResponse(normalized)) {
-      throw new Error("vehicle.json 缺少有效车况 data.status");
+      throw new Error("vehicle.json 缺少有效电量数据 soc_status");
     }
     return { source: "live", data: normalized };
   } catch (err) {
@@ -77,13 +91,20 @@ export async function fetchVehicleData(): Promise<VehicleDataResult> {
   }
 }
 
-export async function peekVehicleState(): Promise<number | null> {
+export async function peekVehicleSignals(): Promise<{
+  vehicleState: number | null;
+  fotaStatus: number | null;
+} | null> {
   try {
     const res = await fetch(`/data/vehicle.json?_=${Date.now()}`);
     if (!res.ok) return null;
     const payload = normalizeVehicleResponse(await readJsonResponse<VehicleResponse>(res, "vehicle.json"));
     if (!isUsableVehicleResponse(payload)) return null;
-    return extractVehicleStatus(payload)?.exterior_status.vehicle_state ?? null;
+    const status = extractVehicleStatus(payload);
+    return {
+      vehicleState: status?.exterior_status.vehicle_state ?? null,
+      fotaStatus: status?.fota_status?.fota_status ?? null,
+    };
   } catch {
     return null;
   }
@@ -122,14 +143,17 @@ export async function loadChangeFetchMeta(): Promise<FetchMeta | null> {
 
 export async function fetchCheckinData(): Promise<CheckinData | null> {
   try {
-    const [res, meta] = await Promise.all([
-      fetch(`/data/checkin.json?_=${Date.now()}`),
-      loadCheckinFetchMeta(),
-    ]);
-    if (!res.ok) return null;
-    if (meta && !meta.ok) return null;
-    const raw = await readJsonResponse<unknown>(res, "checkin.json");
-    return normalizeCheckinData(raw);
+    const res = await fetch(`/data/checkin.json?_=${Date.now()}`);
+    if (res.ok) {
+      const raw = await readJsonResponse<unknown>(res, "checkin.json");
+      const normalized = normalizeCheckinData(raw);
+      if (normalized) return normalized;
+    }
+
+    const vehicleRes = await fetch(`/data/vehicle.json?_=${Date.now()}`);
+    if (!vehicleRes.ok) return null;
+    const vehicleRaw = await readJsonResponse<unknown>(vehicleRes, "vehicle.json");
+    return normalizeCheckinData(vehicleRaw);
   } catch {
     return null;
   }
@@ -140,6 +164,61 @@ export async function loadCheckinFetchMeta(): Promise<FetchMeta | null> {
     const res = await fetch(`/data/last-fetch-checkin.json?_=${Date.now()}`);
     if (!res.ok) return null;
     return readJsonResponse<FetchMeta>(res, "last-fetch-checkin.json");
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchJourneyData(): Promise<JourneyFile | null> {
+  try {
+    const res = await fetch(`/data/journey.json?_=${Date.now()}`);
+    if (!res.ok) return null;
+    const raw = await readJsonResponse<unknown>(res, "journey.json");
+    return isJourneyFile(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDailyData(): Promise<DailyFile | null> {
+  try {
+    const res = await fetch(`/data/daily.json?_=${Date.now()}`);
+    if (!res.ok) return null;
+    const raw = await readJsonResponse<unknown>(res, "daily.json");
+    return isDailyFile(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchJourneyHistory(): Promise<JourneyHistoryItem[]> {
+  try {
+    const res = await fetch(`/data/journey-history.json?_=${Date.now()}`);
+    if (!res.ok) return [];
+    const raw = await readJsonResponse<unknown>(res, "journey-history.json");
+    return Array.isArray(raw) ? (raw as JourneyHistoryItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchDailyHistory(): Promise<DailyHistory> {
+  try {
+    const res = await fetch(`/data/daily-history.json?_=${Date.now()}`);
+    if (!res.ok) return {};
+    const raw = await readJsonResponse<unknown>(res, "daily-history.json");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as DailyHistory) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function fetchPowerData(): Promise<PowerFile | null> {
+  try {
+    const res = await fetch(`/data/power.json?_=${Date.now()}`);
+    if (!res.ok) return null;
+    const raw = await readJsonResponse<unknown>(res, "power.json");
+    return isPowerFile(raw) ? raw : null;
   } catch {
     return null;
   }
@@ -156,7 +235,7 @@ export async function fetchChangeData(): Promise<ChangeResponse | null> {
   }
 }
 
-export type FetchTarget = "vehicle" | "change" | "all";
+export type FetchTarget = "vehicle" | "change" | "checkin" | "all";
 
 async function triggerServerFetchTarget(target: FetchTarget): Promise<void> {
   const path =
@@ -164,8 +243,11 @@ async function triggerServerFetchTarget(target: FetchTarget): Promise<void> {
       ? "/api/fetch-vehicle"
       : target === "change"
         ? "/api/fetch-change"
-        : "/api/fetch-now";
-  const label = target === "vehicle" ? "车辆" : target === "change" ? "换电" : "全部";
+        : target === "checkin"
+          ? "/api/fetch-checkin"
+          : "/api/fetch-now";
+  const label =
+    target === "vehicle" ? "车辆" : target === "change" ? "换电" : target === "checkin" ? "签到" : "全部";
 
   let res: Response;
   try {
@@ -193,6 +275,10 @@ export async function triggerServerFetchVehicle(): Promise<void> {
 
 export async function triggerServerFetchChange(): Promise<void> {
   return triggerServerFetchTarget("change");
+}
+
+export async function triggerServerFetchCheckin(): Promise<void> {
+  return triggerServerFetchTarget("checkin");
 }
 
 export async function triggerServerFetch(): Promise<void> {

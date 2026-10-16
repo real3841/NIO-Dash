@@ -7,11 +7,8 @@ import {
 } from "../src/lib/tray-display.js";
 import {
   getChangePollIntervalSec,
-  getVehiclePollIntervalSec,
+  getVehiclePollInfo,
   parseEnvFromFile,
-  vehiclePollLabel,
-  vehiclePollReason,
-  readVehicleState,
 } from "../scripts/poll-interval.js";
 
 export interface TrayStatus {
@@ -55,10 +52,8 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
 export function readTrayStatus(dataDir: string, envFile: string): TrayStatus {
   const env = loadEnvFromFile(envFile);
   const displayFields = parseTrayDisplay(env.NIO_TRAY_DISPLAY);
-  const vehiclePollSec = getVehiclePollIntervalSec(env, dataDir);
+  const vehiclePoll = getVehiclePollInfo(env, dataDir);
   const changePollSec = getChangePollIntervalSec(env);
-  const vehicleState = readVehicleState(dataDir);
-  const pollReason = vehiclePollReason(vehicleState);
 
   const vehicle = readJson<{
     data?: {
@@ -103,7 +98,9 @@ export function readTrayStatus(dataDir: string, envFile: string): TrayStatus {
   if (typeof range === "number") lines.push(`续航 ${range} km`);
   if (orderCount !== null) lines.push(`换电/服务记录 ${orderCount} 条`);
   lines.push(
-    `车辆拉取 · ${vehiclePollLabel(pollReason)} 每 ${fmtPollSec(vehiclePollSec)}（行驶/白天/夜间可配）`,
+    vehiclePoll.reason === "fota"
+      ? `车辆拉取 · 系统更新中每 ${fmtPollSec(vehiclePoll.intervalSec)}，结束后恢复设定间隔`
+      : `车辆拉取 · ${vehiclePoll.reasonLabel} 每 ${fmtPollSec(vehiclePoll.intervalSec)}（行驶/白天/夜间可配）`,
   );
   lines.push(`换电拉取 · 每 ${fmtPollSec(changePollSec)}`);
   if (vehicleMeta?.at) {

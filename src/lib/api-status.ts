@@ -1,4 +1,5 @@
 import type { FetchMeta } from "./storage";
+import { errorKindHint } from "./nio-api-errors";
 
 export type ApiConfigStatus = "ok" | "error" | "pending" | "unset";
 
@@ -66,13 +67,25 @@ export function isCheckinApiConfigured(values: Record<string, string> | null | u
   );
 }
 
+export function resolveCheckinApiStatus(
+  meta: FetchMeta | null | undefined,
+  configured: boolean,
+  checkinData: { checked_in: boolean } | null | undefined,
+): ApiConfigStatus {
+  if (!configured) return "unset";
+  if (checkinData) return "ok";
+  if (!meta) return "pending";
+  return meta.ok ? "ok" : "error";
+}
+
 export function apiStatusDetail(
   status: ApiConfigStatus,
   meta: FetchMeta | null | undefined,
 ): string {
   const base = apiStatusLabel(status);
   if (status === "error" && meta?.error) {
-    return `${base}：${meta.error}`;
+    const hint = errorKindHint(meta.errorKind);
+    return hint ? `${base}：${meta.error}（${hint}）` : `${base}：${meta.error}`;
   }
   return base;
 }

@@ -1,6 +1,17 @@
+import fs from "node:fs";
 import { appendFetchLog, setSlotSchedule } from "./fetch-log.js";
 import { runChangeOnce } from "./fetch-change.js";
 import { runVehicleOnce } from "./fetch-vehicle.js";
+import { getChangeMetaFile } from "./paths.js";
+
+function readChangeLastSuccessAt(): number | null {
+  try {
+    const meta = JSON.parse(fs.readFileSync(getChangeMetaFile(), "utf8")) as { ok?: boolean; at?: number };
+    return meta.ok && typeof meta.at === "number" ? meta.at : null;
+  } catch {
+    return null;
+  }
+}
 
 export type FetchSlot = "all" | "vehicle" | "change";
 
@@ -88,14 +99,23 @@ function startSlotScheduler(
   onComplete: (() => void) | null,
   deferInitialTick: boolean,
   getScheduleDetail?: () => string | null,
+  getLastSuccessAt?: () => number | null,
 ): FetchScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
-  const scheduleNext = () => {
+  /** 距上次成功还没满一个间隔时，只等剩下的时间（重启 App 不会立刻重拉） */
+  const remainingSec = (): number | null => {
+    const last = getLastSuccessAt?.();
+    if (!last) return null;
+    const left = Math.ceil((last + Math.max(15, getIntervalSec()) * 1000 - Date.now()) / 1000);
+    return left > 0 ? Math.max(15, left) : null;
+  };
+
+  const scheduleNext = (delaySec?: number) => {
     if (stopped) return;
     if (timer) clearTimeout(timer);
-    const sec = Math.max(15, getIntervalSec());
+    const sec = delaySec ?? Math.max(15, getIntervalSec());
     const nextAt = Date.now() + sec * 1000;
     const detail = getScheduleDetail?.() ?? null;
     setSlotSchedule(slot, { nextAt, intervalSec: sec, detail });
@@ -124,7 +144,7 @@ function startSlotScheduler(
     timer = null;
     if (stopped) return;
     if (immediate) void tick();
-    else scheduleNext();
+    else scheduleNext(remainingSec() ?? undefined);
   };
 
   const stop = () => {
@@ -134,7 +154,9 @@ function startSlotScheduler(
   };
 
   if (!deferInitialTick) {
-    void tick();
+    const left = remainingSec();
+    if (left !== null) scheduleNext(left);
+    else void tick();
   }
 
   return { reschedule, stop };
@@ -160,6 +182,8 @@ export function startDualFetchScheduler(options: {
     runChangeOnce,
     onChangeFetchComplete,
     options.deferInitialTick ?? false,
+    undefined,
+    readChangeLastSuccessAt,
   );
 
   return {

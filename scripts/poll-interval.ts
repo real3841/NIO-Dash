@@ -12,7 +12,7 @@ export const CHANGE_POLL_ENV_KEY = "NIO_CHANGE_POLL_INTERVAL" as const;
 const DEFAULT_DRIVING_SEC = 900;
 const DEFAULT_DAY_SEC = 1800;
 const DEFAULT_NIGHT_SEC = 3600;
-const DEFAULT_CHANGE_SEC = 3600;
+const DEFAULT_CHANGE_SEC = 86400;
 
 export function parsePollSec(value: string | undefined, fallback: number): number {
   const n = Number(value);
@@ -40,6 +40,27 @@ export function vehiclePollReason(
   return isDaytime(now) ? "day" : "night";
 }
 
+export const FOTA_POLL_SEC = 120;
+
+export function isFotaUpdating(fota: { fota_status?: number } | null | undefined): boolean {
+  return typeof fota?.fota_status === "number" && fota.fota_status !== 0;
+}
+
+function readFotaStatus(dataDir: string): { fota_status?: number } | null {
+  try {
+    const file = path.join(dataDir, "vehicle.json");
+    if (!fs.existsSync(file)) return null;
+    const json = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      data?: { status?: { fota_status?: { fota_status?: number } } };
+    };
+    const fota = json.data?.status?.fota_status;
+    if (!fota || typeof fota !== "object") return null;
+    return { fota_status: typeof fota.fota_status === "number" ? fota.fota_status : undefined };
+  } catch {
+    return null;
+  }
+}
+
 export function readVehicleState(dataDir: string): number | null {
   try {
     const file = path.join(dataDir, "vehicle.json");
@@ -58,10 +79,13 @@ export function getVehiclePollInfo(
   env: Record<string, string>,
   dataDir: string,
   now = new Date(),
-): { intervalSec: number; reason: "driving" | "day" | "night"; reasonLabel: string } {
+): { intervalSec: number; reason: "driving" | "day" | "night" | "fota"; reasonLabel: string } {
   const driving = parsePollSec(env.NIO_VEHICLE_POLL_DRIVING_SEC, DEFAULT_DRIVING_SEC);
   const day = parsePollSec(env.NIO_VEHICLE_POLL_DAY_SEC, DEFAULT_DAY_SEC);
   const night = parsePollSec(env.NIO_VEHICLE_POLL_NIGHT_SEC, DEFAULT_NIGHT_SEC);
+  if (isFotaUpdating(readFotaStatus(dataDir))) {
+    return { intervalSec: FOTA_POLL_SEC, reason: "fota", reasonLabel: vehiclePollLabel("fota") };
+  }
   const state = readVehicleState(dataDir);
   const reason = vehiclePollReason(state, now);
   const intervalSec = reason === "driving" ? driving : reason === "day" ? day : night;
@@ -82,8 +106,8 @@ export function getChangePollIntervalSec(env: Record<string, string>): number {
   return parsePollSec(env.NIO_POLL_INTERVAL, DEFAULT_CHANGE_SEC);
 }
 
-export function vehiclePollLabel(reason: "driving" | "day" | "night"): string {
-  return { driving: "行驶中", day: "白天", night: "夜间" }[reason];
+export function vehiclePollLabel(reason: "driving" | "day" | "night" | "fota"): string {
+  return { driving: "行驶中", day: "白天", night: "夜间", fota: "系统更新" }[reason];
 }
 
 export function minVehiclePollSec(env: Record<string, string>): number {

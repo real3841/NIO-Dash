@@ -152,19 +152,25 @@ function CardSectionManager({
   );
 }
 
-export function CardLayoutSettings() {
+export function CardLayoutSettings({ embedded = false }: { embedded?: boolean }) {
+  const body = (
+    <div className="card-manager-split">
+      <CardSectionManager section="vehicle" defs={VEHICLE_CARDS} title="车辆看板" twoColumn />
+      <CardSectionManager section="orders" defs={ORDER_CARDS} title="服务订单" />
+    </div>
+  );
+
+  if (embedded) {
+    return <div className="sync-hub-panel-body card-manager-panel">{body}</div>;
+  }
+
   return (
     <details className="card-manager-details">
       <summary className="card-manager-summary">
         <span>卡片管理</span>
         <span className="drawer-summary-meta">点击展开</span>
       </summary>
-      <div className="card-manager-panel">
-        <div className="card-manager-split">
-          <CardSectionManager section="vehicle" defs={VEHICLE_CARDS} title="车辆看板" twoColumn />
-          <CardSectionManager section="orders" defs={ORDER_CARDS} title="服务订单" />
-        </div>
-      </div>
+      <div className="sync-hub-panel-body card-manager-panel">{body}</div>
     </details>
   );
 }

@@ -6,6 +6,7 @@
  *   NIO_VEHICLE_ACCESS_TOKEN=你的 Bearer Token
  */
 
+import { classifyVehicleApiFailure } from "../src/lib/nio-api-errors.js";
 import { normalizeRvsVehiclePayload } from "./nio-rvs.js";
 import { buildWidgetUrl, normalizeVehiclePayload, widgetHeadersFromEnv } from "./nio-widget.js";
 import { fetchWithAsciiHeaders, normalizeBearerToken } from "./http-headers.js";
@@ -34,11 +35,21 @@ function readJsonResponse<T>(text: string, label: string): T {
 }
 
 function buildUrlModeConfig(explicitUrl: string): FetchConfig {
+  const isWidget = /\/widget\/info/i.test(explicitUrl) || /(?:^|[?&])widget_functions=/.test(explicitUrl);
   const headersJson = process.env.NIO_VEHICLE_API_HEADERS ?? process.env.NIO_API_HEADERS;
-  let headers: Record<string, string> = {
-    Accept: "application/json",
-    "User-Agent": process.env.NIO_VEHICLE_USER_AGENT ?? process.env.NIO_USER_AGENT ?? DEFAULT_USER_AGENT,
-  };
+  let headers: Record<string, string> = isWidget
+    ? {
+        Accept: "*/*",
+        Connection: "keep-alive",
+        "User-Agent":
+          process.env.NIO_VEHICLE_USER_AGENT ??
+          process.env.NIO_USER_AGENT ??
+          "VehicleWidgetExtension/6.5.3 (com.nio.app; build:6050300; iOS 18.0.0)",
+      }
+    : {
+        Accept: "application/json",
+        "User-Agent": process.env.NIO_VEHICLE_USER_AGENT ?? process.env.NIO_USER_AGENT ?? DEFAULT_USER_AGENT,
+      };
 
   if (headersJson) {
     try {
@@ -95,11 +106,25 @@ export async function fetchFromApi(config: FetchConfig): Promise<Record<string, 
 
   const text = await res.text();
 
-  if (!res.ok) {
-    throw new Error(`API ${res.status}: ${text.slice(0, 500)}`);
+  let payload: Record<string, unknown> | null = null;
+  try {
+    payload = readJsonResponse<Record<string, unknown>>(text, "蔚来 API");
+  } catch {
+    if (!res.ok) {
+      throw classifyVehicleApiFailure(null, res.status);
+    }
+    throw new Error("蔚来 API 不是合法 JSON");
   }
 
-  const raw = readJsonResponse<Record<string, unknown>>(text, "蔚来 API");
-  const rvs = normalizeRvsVehiclePayload(raw);
+  if (!res.ok) {
+    throw classifyVehicleApiFailure(payload, res.status);
+  }
+
+  const code = payload.result_code ?? payload.resultCode;
+  if (code && code !== "success" && code !== "0000") {
+    throw classifyVehicleApiFailure(payload, res.status);
+  }
+
+  const rvs = normalizeRvsVehiclePayload(payload);
   return normalizeVehiclePayload(rvs);
 }

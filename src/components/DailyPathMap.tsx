@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CircleMarker, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -7,14 +7,16 @@ import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import {
   buildDailyPaths,
   fmtClock,
+  formatCoordLabel,
+  journeySnapshots,
   localDayKey,
-  type DailyPath,
+  type DrivingTrip,
 } from "../lib/path-history";
-import {
-  loadDrawerOpen,
-  PATH_DRAWER_KEY,
-  saveDrawerOpen,
-} from "../lib/drawer-state";
+import type { JourneyHistoryItem } from "../lib/trip";
+import { PATH_DRAWER_KEY, saveDrawerOpen } from "../lib/drawer-state";
+import { fetchEnvConfig } from "../lib/env-config";
+import { wgs84ToGcj02 } from "../lib/gcj02";
+import { mapTileFromEnv, type MapTileConfig } from "../lib/map-tiles";
 import { isValidGps, type VehicleSnapshot } from "../lib/vehicle";
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
@@ -24,9 +26,18 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-interface DailyPathMapProps {
-  history: VehicleSnapshot[];
+const TRIP_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2"];
+
+interface PathMapLeafletProps {
+  activeDay: string | null;
+  tileConfig: MapTileConfig;
+  mapCenter: [number, number];
+  focusPositions: [number, number][];
+  allTrips: DrivingTrip[];
+  highlightedTripIndex: number | null;
+  showCurrent: boolean;
   current?: { lat: number; lng: number; ts: number } | null;
+  open: boolean;
 }
 
 function MapLayout({ positions, enabled }: { positions: [number, number][]; enabled: boolean }) {
@@ -117,66 +128,192 @@ function buildPathArrows(positions: [number, number][], maxArrows = 12): PathArr
   return arrows;
 }
 
-function createArrowIcon(bearing: number): L.DivIcon {
+function createArrowIcon(bearing: number, color: string): L.DivIcon {
   return L.divIcon({
     className: "path-arrow-icon",
-    html: `<svg class="path-arrow-svg" width="22" height="22" viewBox="0 0 22 22" style="transform: rotate(${bearing}deg)" aria-hidden="true"><path d="M11 3 L18 17 L11 13 L4 17 Z" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
+    html: `<svg class="path-arrow-svg" width="22" height="22" viewBox="0 0 22 22" style="transform: rotate(${bearing}deg)" aria-hidden="true"><path d="M11 3 L18 17 L11 13 L4 17 Z" fill="${color}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   });
 }
 
-function PathStats({ path }: { path: DailyPath }) {
-  const sampleCount = path.points.length;
-  const distance =
-    path.distanceKm >= 10
-      ? `${path.distanceKm.toFixed(1)} km`
-      : path.distanceKm >= 0.1
-        ? `${path.distanceKm.toFixed(2)} km`
-        : `${Math.round(path.distanceKm * 1000)} m`;
-
+function PathMapLeaflet({
+  activeDay,
+  tileConfig,
+  mapCenter,
+  focusPositions,
+  allTrips,
+  highlightedTripIndex,
+  showCurrent,
+  current,
+  open,
+}: PathMapLeafletProps) {
   return (
-    <div className="path-stats-wrap">
-      <div className="path-direction-bar">
-        <span className="path-direction-end path-direction-start">
-          <span className="path-direction-dot start" aria-hidden="true" />
-          起点 {fmtClock(path.startTime)}
-        </span>
-        <span className="path-direction-arrow" aria-hidden="true">
-          →
-        </span>
-        <span className="path-direction-end path-direction-endpoint">
-          <span className="path-direction-dot end" aria-hidden="true" />
-          终点 {fmtClock(path.endTime)}
-        </span>
-      </div>
-      <div className="path-stats">
-        <span>{sampleCount} 个路径点</span>
-        <span>行驶约 {distance}</span>
-      </div>
+    <div className="map-wrap path-map-wrap">
+      <MapContainer
+        key={`${activeDay ?? "map"}-${tileConfig.provider}`}
+        center={mapCenter}
+        zoom={14}
+        scrollWheelZoom
+        className="map path-map"
+      >
+        <TileLayer
+          attribution={tileConfig.attribution}
+          url={tileConfig.url}
+          maxZoom={tileConfig.maxZoom}
+          subdomains={tileConfig.subdomains}
+        />
+        <MapLayout positions={focusPositions} enabled={open} />
+        {allTrips.map((trip, tripIdx) => {
+          const color = TRIP_COLORS[tripIdx % TRIP_COLORS.length];
+          const highlighted = trip.index === highlightedTripIndex;
+          const positions = tripPositions(trip, tileConfig.provider);
+          const arrows = highlighted ? buildPathArrows(positions) : [];
+          return (
+            <Fragment key={`trip-layer-${trip.index}`}>
+              {positions.length >= 2 && (
+                <Polyline
+                  positions={positions}
+                  pathOptions={{
+                    color,
+                    weight: highlighted ? 6 : 3,
+                    opacity: highlighted ? 0.95 : 0.28,
+                  }}
+                />
+              )}
+              {arrows.map((arrow, i) => (
+                <Marker
+                  key={`arrow-${trip.index}-${i}`}
+                  position={[arrow.lat, arrow.lng]}
+                  icon={createArrowIcon(arrow.bearing, color)}
+                  interactive={false}
+                />
+              ))}
+              {highlighted &&
+                trip.points.map((p, i) => {
+                  const [lat, lng] = toMapCoords(p.lat, p.lng, tileConfig.provider);
+                  const isStart = i === 0;
+                  const isEnd = i === trip.points.length - 1;
+                  const markerColor = isStart ? "#16a34a" : isEnd ? "#dc2626" : color;
+                  const radius = isStart || isEnd ? 7 : 4;
+                  return (
+                    <CircleMarker
+                      key={`${trip.index}-${p.ts}-${i}`}
+                      center={[lat, lng]}
+                      radius={radius}
+                      pathOptions={{
+                        color: markerColor,
+                        fillColor: markerColor,
+                        fillOpacity: 0.9,
+                        weight: 2,
+                      }}
+                    >
+                      <Tooltip direction="top" offset={[0, -4]}>
+                        第 {trip.index} 段 · {isStart ? "起点" : isEnd ? "终点" : "途经"} · {fmtClock(p.ts)}
+                      </Tooltip>
+                    </CircleMarker>
+                  );
+                })}
+            </Fragment>
+          );
+        })}
+        {showCurrent && current && (
+          <CircleMarker
+            center={toMapCoords(current.lat, current.lng, tileConfig.provider)}
+            radius={9}
+            pathOptions={{ color: "#7c3aed", fillColor: "#7c3aed", fillOpacity: 0.35, weight: 3 }}
+          >
+            <Tooltip direction="top">当前位置</Tooltip>
+          </CircleMarker>
+        )}
+      </MapContainer>
     </div>
   );
 }
 
+interface DailyPathMapProps {
+  history: VehicleSnapshot[];
+  journeys?: JourneyHistoryItem[];
+  current?: { lat: number; lng: number; ts: number } | null;
+}
+
 function formatDistance(km: number): string {
-  if (km >= 0.1) return `${km.toFixed(1)} km`;
+  if (km >= 10) return `${km.toFixed(1)} km`;
+  if (km >= 0.1) return `${km.toFixed(2)} km`;
   return `${Math.round(km * 1000)} m`;
 }
 
-export function DailyPathMap({ history, current }: DailyPathMapProps) {
-  const dailyPaths = useMemo(() => buildDailyPaths(history), [history]);
+function toMapCoords(
+  lat: number,
+  lng: number,
+  provider: MapTileConfig["provider"],
+): [number, number] {
+  if (provider === "amap") {
+    const gcj = wgs84ToGcj02(lng, lat);
+    return [gcj.lat, gcj.lng];
+  }
+  return [lat, lng];
+}
+
+function tripPositions(trip: DrivingTrip, provider: MapTileConfig["provider"]): [number, number][] {
+  return trip.points.map((p) => toMapCoords(p.lat, p.lng, provider));
+}
+
+function TripSummary({ trip }: { trip: DrivingTrip }) {
+  return (
+    <p className="path-trip-detail-inline muted">
+      第 {trip.index} 段 · {fmtClock(trip.startTime)} → {fmtClock(trip.endTime)} · {formatDistance(trip.distanceKm)}
+      {" · "}
+      {formatCoordLabel(trip.startLat, trip.startLng)} → {formatCoordLabel(trip.endLat, trip.endLng)}
+    </p>
+  );
+}
+
+export function DailyPathMap({ history, journeys, current }: DailyPathMapProps) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [open, setOpen] = useState(() => loadDrawerOpen(PATH_DRAWER_KEY, false));
+  const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
+  const [hoverTripIndex, setHoverTripIndex] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tileConfig, setTileConfig] = useState<MapTileConfig>(() => mapTileFromEnv({}));
+
+  const dailyPaths = useMemo(() => {
+    if (!open) return [];
+    return buildDailyPaths(journeys?.length ? [...history, ...journeySnapshots(journeys)] : history);
+  }, [history, journeys, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const loadMapConfig = () => {
+      void fetchEnvConfig()
+        .then((cfg) => setTileConfig(mapTileFromEnv(cfg.map)))
+        .catch(() => setTileConfig(mapTileFromEnv({})));
+    };
+    loadMapConfig();
+    window.addEventListener("nio-map-config-updated", loadMapConfig);
+    return () => window.removeEventListener("nio-map-config-updated", loadMapConfig);
+  }, [open]);
 
   const activeDay = selectedDay ?? dailyPaths[0]?.day ?? null;
   const activePath = dailyPaths.find((p) => p.day === activeDay) ?? null;
+  const activeTrip =
+    activePath && selectedTripIndex !== null
+      ? activePath.trips.find((t) => t.index === selectedTripIndex) ?? null
+      : null;
 
-  const positions = useMemo<[number, number][]>(() => {
-    if (!activePath) return [];
-    return activePath.points.map((p) => [p.lat, p.lng]);
-  }, [activePath]);
+  const highlightedTripIndex = hoverTripIndex ?? selectedTripIndex;
 
-  const pathArrows = useMemo(() => buildPathArrows(positions), [positions]);
+  const allTrips = activePath?.trips ?? [];
+  const mapPositions = useMemo<[number, number][]>(() => {
+    if (allTrips.length === 0) return [];
+    return allTrips.flatMap((trip) => tripPositions(trip, tileConfig.provider));
+  }, [allTrips, tileConfig.provider]);
+
+  const focusPositions = useMemo<[number, number][]>(() => {
+    if (highlightedTripIndex === null) return mapPositions;
+    const trip = allTrips.find((t) => t.index === highlightedTripIndex);
+    if (!trip) return mapPositions;
+    return tripPositions(trip, tileConfig.provider);
+  }, [allTrips, highlightedTripIndex, mapPositions, tileConfig.provider]);
 
   useEffect(() => {
     if (dailyPaths.length === 0) return;
@@ -188,19 +325,37 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
     });
   }, [dailyPaths]);
 
+  useEffect(() => {
+    if (!activePath) {
+      setSelectedTripIndex(null);
+      setHoverTripIndex(null);
+      return;
+    }
+    setSelectedTripIndex((prev) => {
+      if (prev !== null && activePath.trips.some((t) => t.index === prev)) return prev;
+      return activePath.trips[0]?.index ?? null;
+    });
+  }, [activePath]);
+
   const summaryMeta =
     dailyPaths.length === 0
       ? "暂无位置历史"
       : activePath
-        ? `${dailyPaths.length} 天 · ${activePath.label} · ${formatDistance(activePath.distanceKm)}`
+        ? `${dailyPaths.length} 天 · ${activePath.label} · ${activePath.trips.length} 段 · ${formatDistance(activePath.distanceKm)}`
         : `${dailyPaths.length} 天记录`;
 
-  const mapCenter = positions[0] ?? (current && isValidGps(current.lat, current.lng) ? [current.lat, current.lng] : [39.9, 116.4]);
+  const mapCenter =
+    mapPositions[0] ??
+    (current && isValidGps(current.lat, current.lng)
+      ? toMapCoords(current.lat, current.lng, tileConfig.provider)
+      : [39.9, 116.4]);
 
   const showCurrent =
     current &&
     isValidGps(current.lat, current.lng) &&
     activeDay === localDayKey(current.ts);
+
+  const showLeaflet = open && activePath !== null && activePath.trips.length > 0;
 
   return (
     <details
@@ -219,7 +374,7 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
 
       {open && dailyPaths.length === 0 && (
         <p className="muted path-empty">
-          开启车辆自动拉取后，系统会记录每次采样的经纬度，并按天汇总成行驶轨迹。
+          开启车辆自动拉取后，系统会记录每次采样的经纬度；行驶中（vehicle_state=1）的连续采样会合并为一段行程。
         </p>
       )}
 
@@ -237,77 +392,59 @@ export function DailyPathMap({ history, current }: DailyPathMapProps) {
               >
                 <span className="path-day-tab-label">{path.label}</span>
                 <span className="path-day-tab-meta">
-                  {path.points.length} 点 · {formatDistance(path.distanceKm)}
+                  {path.trips.length} 段 · {formatDistance(path.distanceKm)}
                 </span>
               </button>
             ))}
           </div>
 
-          {activePath && <PathStats path={activePath} />}
+          {activePath && activePath.trips.length === 0 && (
+            <p className="muted path-hint">当天没有识别到行驶段（需 vehicle_state=1 的连续采样，或明显位移）</p>
+          )}
 
-          <div className="map-wrap path-map-wrap">
-            <MapContainer
-              key={activeDay ?? "map"}
-              center={mapCenter as [number, number]}
-              zoom={14}
-              scrollWheelZoom
-              className="map path-map"
-            >
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maxZoom={19}
-                subdomains={["a", "b", "c"]}
-              />
-              <MapLayout positions={positions} enabled={open} />
-              {activePath && positions.length >= 2 && (
-                <Polyline
-                  positions={positions}
-                  pathOptions={{ color: "#2563eb", weight: 5, opacity: 0.85 }}
-                />
-              )}
-              {pathArrows.map((arrow, i) => (
-                <Marker
-                  key={`arrow-${i}-${arrow.lat}-${arrow.lng}`}
-                  position={[arrow.lat, arrow.lng]}
-                  icon={createArrowIcon(arrow.bearing)}
-                  interactive={false}
-                />
-              ))}
-              {activePath?.points.map((p, i) => {
-                const isStart = i === 0;
-                const isEnd = i === activePath.points.length - 1;
-                const color = isStart ? "#16a34a" : isEnd ? "#dc2626" : "#2563eb";
-                const radius = isStart || isEnd ? 7 : 4;
-                return (
-                  <CircleMarker
-                    key={`${p.ts}-${i}`}
-                    center={[p.lat, p.lng]}
-                    radius={radius}
-                    pathOptions={{ color, fillColor: color, fillOpacity: 0.9, weight: 2 }}
-                  >
-                    <Tooltip direction="top" offset={[0, -4]}>
-                      {isStart ? "起点" : isEnd ? "终点" : "途经"} · {fmtClock(p.ts)}
-                      <br />
-                      {p.lat.toFixed(5)}°N, {p.lng.toFixed(5)}°E
-                    </Tooltip>
-                  </CircleMarker>
-                );
-              })}
-              {showCurrent && (
-                <CircleMarker
-                  center={[current.lat, current.lng]}
-                  radius={9}
-                  pathOptions={{ color: "#7c3aed", fillColor: "#7c3aed", fillOpacity: 0.35, weight: 3 }}
-                >
-                  <Tooltip direction="top">当前位置</Tooltip>
-                </CircleMarker>
-              )}
-            </MapContainer>
-          </div>
+          {activePath && activePath.trips.length > 0 && (
+            <>
+              <div className="path-trip-tabs" role="tablist" aria-label="选择行程段">
+                {activePath.trips.map((trip, i) => {
+                  const color = TRIP_COLORS[i % TRIP_COLORS.length];
+                  const selected = trip.index === selectedTripIndex;
+                  const highlighted = trip.index === highlightedTripIndex;
+                  return (
+                    <button
+                      key={trip.index}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      className={`path-trip-tab${selected ? " active" : ""}${highlighted ? " highlighted" : ""}`}
+                      style={{ "--trip-color": color } as React.CSSProperties}
+                      onClick={() => setSelectedTripIndex(trip.index)}
+                      onMouseEnter={() => setHoverTripIndex(trip.index)}
+                      onMouseLeave={() => setHoverTripIndex(null)}
+                    >
+                      <span className="path-trip-tab-dot" aria-hidden="true" />
+                      <span className="path-trip-tab-title">第{trip.index}段</span>
+                      <span className="path-trip-tab-meta">{formatDistance(trip.distanceKm)}</span>
+                    </button>
+                  );
+                })}
+              </div>
 
-          {activePath && activePath.points.length < 2 && (
-            <p className="muted path-hint">当天仅有 1 个位置点（车辆可能未移动或采样较少）</p>
+              {activeTrip && <TripSummary trip={activeTrip} />}
+
+              {showLeaflet && (
+                <PathMapLeaflet
+                    activeDay={activeDay}
+                    tileConfig={tileConfig}
+                    mapCenter={mapCenter as [number, number]}
+                    focusPositions={focusPositions}
+                    allTrips={allTrips}
+                    highlightedTripIndex={highlightedTripIndex}
+                    showCurrent={Boolean(showCurrent)}
+                    current={current}
+                    open={open}
+                  />
+              )}
+            </>
           )}
         </>
       )}

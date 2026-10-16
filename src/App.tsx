@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import pkg from "../package.json";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
 import { SwapHistory } from "./components/SwapHistory";
@@ -6,14 +7,15 @@ import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
 import type { ChangeResponse } from "./lib/change";
 import type { CheckinData } from "./lib/checkin";
-import {
-  loadDrawerOpen,
-  saveDrawerOpen,
-  TREND_DRAWER_KEY,
-} from "./lib/drawer-state";
+import type { DailyFile, DailyHistory, JourneyFile, JourneyHistoryItem } from "./lib/trip";
+import type { PowerFile } from "./lib/power";
+import { saveDrawerOpen, TREND_DRAWER_KEY } from "./lib/drawer-state";
 import { reverseGeocodeCached } from "./lib/geocode-cache";
+import { mapCoordsFromGcj02 } from "./lib/gcj02";
 import { hydrateCardLayout } from "./lib/card-layout";
 import {
+  DEFAULT_CHANGE_POLL_SEC,
+  formatPollSummary,
   getVehiclePollInfo,
   normalizeVehiclePollEnv,
   parsePollSec,
@@ -26,16 +28,31 @@ import {
   loadCheckinFetchMeta,
   fetchChangeData,
   fetchCheckinData,
+  fetchDailyData,
+  fetchDailyHistory,
+  fetchJourneyData,
+  fetchJourneyHistory,
+  fetchPowerData,
   fetchServerHistory,
   triggerServerFetch,
   triggerServerFetchChange,
+  triggerServerFetchCheckin,
   triggerServerFetchVehicle,
   fetchVehicleData,
   loadHistory,
-  peekVehicleState,
+  peekVehicleSignals,
   saveHistory,
   type FetchMeta,
 } from "./lib/storage";
+import {
+  ackStockWatchAlert,
+  fetchStockWatch,
+  notifyStockInStock,
+  saveStockWatchAuth,
+  saveStockWatchPollSec,
+  triggerStockWatchCheck,
+  type StockWatchState,
+} from "./lib/stock-watch";
 import {
   extractVehicleStatus,
   fmtTime,
@@ -61,9 +78,15 @@ function updateVehiclePollInterval(
   setter: (sec: number) => void,
   reasonSetter?: (label: string) => void,
   configuredSetter?: (intervals: VehiclePollIntervals) => void,
+  fotaStatus?: number | null,
 ): void {
   const normalized = normalizeVehiclePollEnv(env);
-  const info = getVehiclePollInfo(normalized, vehicleState);
+  const info = getVehiclePollInfo(
+    normalized,
+    vehicleState,
+    new Date(),
+    fotaStatus == null ? null : { fota_status: fotaStatus },
+  );
   setter(info.intervalSec);
   reasonSetter?.(info.reasonLabel);
   configuredSetter?.(info.intervals);
@@ -84,6 +107,11 @@ export default function App() {
   const [address, setAddress] = useState<string | null>(null);
   const [changeData, setChangeData] = useState<ChangeResponse | null>(null);
   const [checkinData, setCheckinData] = useState<CheckinData | null>(null);
+  const [journeyData, setJourneyData] = useState<JourneyFile | null>(null);
+  const [dailyData, setDailyData] = useState<DailyFile | null>(null);
+  const [journeyHistory, setJourneyHistory] = useState<JourneyHistoryItem[]>([]);
+  const [dailyHistory, setDailyHistory] = useState<DailyHistory>({});
+  const [powerData, setPowerData] = useState<PowerFile | null>(null);
   const [checkinMeta, setCheckinMeta] = useState<FetchMeta | null>(null);
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).get("setup") === "1",
@@ -95,11 +123,14 @@ export default function App() {
     day: 1800,
     night: 3600,
   });
-  const [changePollSec, setChangePollSec] = useState(3600);
-  const [trendOpen, setTrendOpen] = useState(() => loadDrawerOpen(TREND_DRAWER_KEY, false));
+  const [changePollSec, setChangePollSec] = useState(DEFAULT_CHANGE_POLL_SEC);
+  const [trendOpen, setTrendOpen] = useState(false);
+  const [stockWatch, setStockWatch] = useState<StockWatchState | null>(null);
+  const [stockWatchLoading, setStockWatchLoading] = useState(false);
 
   const pollEnvRef = useRef<VehiclePollEnv | null>(null);
   const vehicleStateRef = useRef<number | null>(null);
+  const fotaStatusRef = useRef<number | null>(null);
   const lastCoordsRef = useRef<string | null>(null);
   const lastApiTriggerRef = useRef(0);
   const initialFetchDone = useRef(false);
@@ -116,7 +147,7 @@ export default function App() {
         setChangePollSec(
           parsePollSec(
             cfg.change.NIO_CHANGE_POLL_INTERVAL || cfg.general.NIO_POLL_INTERVAL,
-            3600,
+            DEFAULT_CHANGE_POLL_SEC,
           ),
         );
         updateVehiclePollInterval(
@@ -133,15 +164,22 @@ export default function App() {
   const syncVehiclePollInterval = useCallback(async () => {
     if (!pollEnvRef.current) return;
 
-    const peeked = await peekVehicleState();
-    if (peeked !== null) {
-      vehicleStateRef.current = peeked;
+    const peeked = await peekVehicleSignals();
+    if (peeked) {
+      if (peeked.vehicleState !== null) vehicleStateRef.current = peeked.vehicleState;
+      fotaStatusRef.current = peeked.fotaStatus;
     }
 
     const state = vehicleStateRef.current;
+    const fotaStatus = fotaStatusRef.current;
     const normalized = normalizeVehiclePollEnv(pollEnvRef.current);
     setVehiclePollSec((prev) => {
-      const info = getVehiclePollInfo(normalized, state);
+      const info = getVehiclePollInfo(
+        normalized,
+        state,
+        new Date(),
+        fotaStatus == null ? null : { fota_status: fotaStatus },
+      );
       setVehiclePollReasonLabel(info.reasonLabel);
       setVehiclePollConfigured(info.intervals);
       return info.intervalSec === prev ? prev : info.intervalSec;
@@ -174,27 +212,32 @@ export default function App() {
       }
     }
 
-    const fetches: [
-      ReturnType<typeof fetchVehicleData>,
-      ReturnType<typeof fetchServerHistory>,
-      ReturnType<typeof loadFetchMeta>,
-      ReturnType<typeof fetchCheckinData> | null,
-      ReturnType<typeof loadCheckinFetchMeta> | null,
-    ] = [
+    const [
+      vehicleResult,
+      serverHistory,
+      meta,
+      checkin,
+      checkinMetaResult,
+      journey,
+      daily,
+      journeys,
+      dailyDays,
+      powerFile,
+    ] = await Promise.all([
       fetchVehicleData(),
       fetchServerHistory(),
       loadFetchMeta(),
-      skipCheckin ? null : fetchCheckinData(),
-      skipCheckin ? null : loadCheckinFetchMeta(),
-    ];
-
-    const [vehicleResult, serverHistory, meta, checkin, checkinMetaResult] = await Promise.all([
-      fetches[0],
-      fetches[1],
-      fetches[2],
-      fetches[3] ?? Promise.resolve(null),
-      fetches[4] ?? Promise.resolve(null),
+      skipCheckin ? Promise.resolve(null) : fetchCheckinData(),
+      skipCheckin ? Promise.resolve(null) : loadCheckinFetchMeta(),
+      fetchJourneyData(),
+      fetchDailyData(),
+      fetchJourneyHistory(),
+      fetchDailyHistory(),
+      fetchPowerData(),
     ]);
+    setJourneyHistory(journeys);
+    setDailyHistory(dailyDays);
+    setPowerData(powerFile);
 
     const payload = vehicleResult.data;
     if (vehicleResult.source === "fallback") {
@@ -210,6 +253,8 @@ export default function App() {
 
     setData(payload);
     setVehicleMeta(meta);
+    setJourneyData(journey);
+    setDailyData(daily);
     if (!skipCheckin) {
       setCheckinData(checkin);
       setCheckinMeta(checkinMetaResult);
@@ -219,7 +264,9 @@ export default function App() {
 
     const status = extractVehicleStatus(payload);
     const vehicleState = status?.exterior_status.vehicle_state ?? null;
+    const fotaStatus = status?.fota_status?.fota_status ?? null;
     vehicleStateRef.current = vehicleState;
+    fotaStatusRef.current = fotaStatus;
     if (pollEnvRef.current) {
       updateVehiclePollInterval(
         pollEnvRef.current,
@@ -227,6 +274,7 @@ export default function App() {
         setVehiclePollSec,
         setVehiclePollReasonLabel,
         setVehiclePollConfigured,
+        fotaStatus,
       );
     }
 
@@ -243,7 +291,8 @@ export default function App() {
 
     const pos = status?.position_status;
     if (pos && isValidGps(pos.latitude, pos.longitude)) {
-      const coordKey = `${Math.round(pos.latitude * 1000)}:${Math.round(pos.longitude * 1000)}`;
+      const wgs = mapCoordsFromGcj02(pos.latitude, pos.longitude);
+      const coordKey = `${Math.round(wgs.lat * 1000)}:${Math.round(wgs.lng * 1000)}`;
       if (coordKey !== lastCoordsRef.current) {
         lastCoordsRef.current = coordKey;
         void reverseGeocodeCached(pos.latitude, pos.longitude).then(setAddress);
@@ -306,10 +355,7 @@ export default function App() {
         }
 
         if (target === "all") {
-          await Promise.all([
-            refreshVehicle(false, true),
-            refreshChange(false, true),
-          ]);
+          await Promise.all([refreshVehicle(false, true), refreshChange(false, true)]);
           await refreshCheckin();
         } else {
           const tasks: Promise<void>[] = [];
@@ -353,7 +399,9 @@ export default function App() {
       if (!initialFetchDone.current || document.visibilityState !== "visible") return;
       void refresh("vehicle", false);
       void refreshCheckin();
-      const elapsed = Date.now() - lastApiTriggerRef.current;
+      const lastTrigger = lastApiTriggerRef.current;
+      if (lastTrigger <= 0) return;
+      const elapsed = Date.now() - lastTrigger;
       if (elapsed >= VISIBILITY_API_MIN_MS) {
         void refresh("vehicle", true);
       }
@@ -376,12 +424,65 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [changePollSec, refresh]);
 
+  const refreshStockWatch = useCallback(async (triggerCheck = false, targetId?: string) => {
+    if (triggerCheck) setStockWatchLoading(true);
+    try {
+      const state = triggerCheck ? await triggerStockWatchCheck(targetId) : await fetchStockWatch();
+      if (!state) return;
+      setStockWatch(state);
+      const alerted = state.items.filter((item) => item.alert);
+      for (const item of alerted) {
+        await notifyStockInStock(item);
+        await ackStockWatchAlert(item.id);
+      }
+      if (alerted.length > 0) {
+        setStockWatch({
+          ...state,
+          items: state.items.map((item) =>
+            alerted.some((alert) => alert.id === item.id) ? { ...item, alert: false } : item,
+          ),
+        });
+      }
+    } finally {
+      if (triggerCheck) setStockWatchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStockWatch(false);
+    const syncTimer = window.setInterval(() => {
+      void refreshStockWatch(false);
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshStockWatch(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(syncTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshStockWatch]);
+
+  const handleStockWatchPollSecChange = useCallback(async (pollSec: number) => {
+    const state = await saveStockWatchPollSec(pollSec);
+    if (state) setStockWatch(state);
+  }, []);
+
+  const handleStockWatchAuthSave = useCallback(async (auth: { cookie?: string; token?: string }) => {
+    const state = await saveStockWatchAuth(auth);
+    if (state) setStockWatch(state);
+    return Boolean(state);
+  }, []);
+
   const loading = loadingTarget !== null;
   const vehicleStatus = data ? extractVehicleStatus(data) : null;
 
   if (!vehicleStatus) {
     return (
       <div className="app loading">
+        <span className="topbar-version app-version-corner">v{pkg.version}</span>
         <p>{loading ? "加载车辆数据…" : errorVehicle ?? "初始化中…"}</p>
         {errorVehicle && (
           <button type="button" className="btn primary" onClick={() => void refresh("all")}>
@@ -390,10 +491,6 @@ export default function App() {
         )}
         {showSettings && (
           <ApiSettings
-            onRefresh={(target, triggerFetch) => {
-              void refresh(target, triggerFetch);
-            }}
-            loadingTarget={loadingTarget}
             lastSyncVehicle={lastSyncVehicle}
             lastSyncChange={lastSyncChange}
             lastSyncCheckin={lastSyncCheckin}
@@ -401,21 +498,25 @@ export default function App() {
             changeMeta={changeMeta}
             errorVehicle={errorVehicle}
             errorChange={errorChange}
-            vehiclePollSec={vehiclePollSec}
-            vehiclePollReasonLabel={vehiclePollReasonLabel}
-            vehiclePollConfigured={vehiclePollConfigured}
-            changePollSec={changePollSec}
+            stockWatch={stockWatch}
+            onStockWatchPollSecChange={handleStockWatchPollSecChange}
+            onSaveStockWatchAuth={handleStockWatchAuthSave}
+            onQuickAuthDone={() => refresh("all", false)}
             onPollConfigLoaded={(vehicleEnv, changeSec) => {
               pollEnvRef.current = normalizeVehiclePollEnv(vehicleEnv);
               setChangePollSec(changeSec);
-              const state = data ? extractVehicleStatus(data)?.exterior_status.vehicle_state ?? null : null;
+              const status = data ? extractVehicleStatus(data) : null;
+              const state = status?.exterior_status.vehicle_state ?? null;
+              const fotaStatus = status?.fota_status?.fota_status ?? fotaStatusRef.current;
               vehicleStateRef.current = state;
+              fotaStatusRef.current = fotaStatus;
               updateVehiclePollInterval(
                 vehicleEnv,
                 state,
                 setVehiclePollSec,
                 setVehiclePollReasonLabel,
                 setVehiclePollConfigured,
+                fotaStatus,
               );
             }}
           />
@@ -426,16 +527,24 @@ export default function App() {
 
   const s = vehicleStatus;
   const posTs = s.position_status.sample_time || s.soc_status.sample_time;
+  const currentWgs = mapCoordsFromGcj02(s.position_status.latitude, s.position_status.longitude);
 
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <h1>蔚来车辆看板</h1>
-          <p className="muted">
+          <p className="muted topbar-sync-meta">
             车况采样 {fmtTime(s.soc_status.sample_time)}
             {vehicleMeta?.ok && vehicleMeta.at ? ` · 车辆拉取 ${fmtTime(vehicleMeta.at)}` : ""}
             {changeMeta?.ok && changeMeta.at ? ` · 换电拉取 ${fmtTime(changeMeta.at)}` : ""}
+            {" · "}
+            {formatPollSummary(
+              vehiclePollConfigured,
+              vehiclePollReasonLabel,
+              vehiclePollSec,
+              changePollSec,
+            )}
           </p>
           <p className="nas-hint">
             在「数据同步」填写 Token；行驶中不论时段按行驶间隔拉取，驻车/充电等按白天/夜间；菜单栏同步显示电量
@@ -448,7 +557,9 @@ export default function App() {
             <p className="nas-error">换电拉取失败：{changeMeta.error}</p>
           )}
         </div>
-        <div className="topbar-actions">
+        <div className="topbar-side">
+          <span className="topbar-version">v{pkg.version}</span>
+          <div className="topbar-actions">
           <button type="button" className="btn ghost" onClick={() => setShowSettings((v) => !v)}>
             {showSettings ? "隐藏设置" : "数据同步"}
           </button>
@@ -468,15 +579,12 @@ export default function App() {
           >
             {loadingTarget === "change" ? "…" : "刷新换电"}
           </button>
+          </div>
         </div>
       </header>
 
       {showSettings && (
         <ApiSettings
-          onRefresh={(target, triggerFetch) => {
-            void refresh(target, triggerFetch);
-          }}
-          loadingTarget={loadingTarget}
           lastSyncVehicle={lastSyncVehicle}
           lastSyncChange={lastSyncChange}
           lastSyncCheckin={lastSyncCheckin}
@@ -486,33 +594,50 @@ export default function App() {
           checkinData={checkinData}
           errorVehicle={errorVehicle}
           errorChange={errorChange}
-          vehiclePollSec={vehiclePollSec}
-          vehiclePollReasonLabel={vehiclePollReasonLabel}
-          vehiclePollConfigured={vehiclePollConfigured}
-          changePollSec={changePollSec}
           onPollConfigLoaded={(vehicleEnv, changeSec) => {
             pollEnvRef.current = normalizeVehiclePollEnv(vehicleEnv);
             setChangePollSec(changeSec);
             vehicleStateRef.current = s.exterior_status.vehicle_state;
+            fotaStatusRef.current = s.fota_status?.fota_status ?? null;
             updateVehiclePollInterval(
               vehicleEnv,
               s.exterior_status.vehicle_state,
               setVehiclePollSec,
               setVehiclePollReasonLabel,
               setVehiclePollConfigured,
+              s.fota_status?.fota_status ?? null,
             );
           }}
+          onTriggerCheckin={async () => {
+            await triggerServerFetchCheckin();
+            await refreshCheckin();
+          }}
+          stockWatch={stockWatch}
+          onStockWatchPollSecChange={handleStockWatchPollSecChange}
+          onSaveStockWatchAuth={handleStockWatchAuthSave}
+          onQuickAuthDone={() => refresh("all", false)}
         />
       )}
 
-      <DashboardCards data={data!} address={address} checkin={checkinData} />
+      <DashboardCards
+        data={data!}
+        address={address}
+        checkin={checkinData}
+        journey={journeyData}
+        daily={dailyData}
+        stockWatch={stockWatch}
+        stockWatchLoading={stockWatchLoading}
+        onRefreshStockWatch={(targetId) => void refreshStockWatch(true, targetId)}
+        power={powerData}
+      />
 
       <Suspense fallback={<section className="panel muted">地图加载中…</section>}>
         <DailyPathMap
           history={history}
+          journeys={journeyHistory}
           current={{
-            lat: s.position_status.latitude,
-            lng: s.position_status.longitude,
+            lat: currentWgs.lat,
+            lng: currentWgs.lng,
             ts: posTs,
           }}
         />
@@ -530,7 +655,7 @@ export default function App() {
         }}
       >
         <summary>历史趋势</summary>
-        {trendOpen && <TrendCharts history={history} />}
+        {trendOpen && <TrendCharts history={history} dailyHistory={dailyHistory} power={powerData} />}
       </details>
     </div>
   );

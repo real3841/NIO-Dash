@@ -1,4 +1,4 @@
-export type FetchLogSlot = "vehicle" | "change" | "checkin" | "system";
+export type FetchLogSlot = "vehicle" | "change" | "checkin" | "stock_watch" | "system";
 export type FetchLogLevel = "info" | "success" | "error";
 
 export interface FetchLogEntry {
@@ -25,12 +25,14 @@ export interface FetchLogSnapshot {
     vehicle: SlotScheduleState;
     change: SlotScheduleState;
     checkin: SlotScheduleState;
+    stock_watch: SlotScheduleState;
   };
   running: {
     all: boolean;
     vehicle: boolean;
     change: boolean;
     checkin: boolean;
+    stock_watch: boolean;
   };
   logs: FetchLogEntry[];
 }
@@ -49,6 +51,7 @@ export const SLOT_LABELS: Record<FetchLogSlot, string> = {
   vehicle: "车辆",
   change: "换电",
   checkin: "签到",
+  stock_watch: "库存",
   system: "系统",
 };
 
@@ -58,7 +61,7 @@ export function findPairedFetchResult(
   startIndex: number,
 ): FetchLogEntry | null {
   const start = logs[startIndex];
-  if (!start.message.includes("开始拉取")) return null;
+  if (!start.message.includes("开始拉取") && !start.message.includes("开始检查")) return null;
   for (let i = startIndex - 1; i >= 0; i -= 1) {
     const entry = logs[i];
     if (entry.slot !== start.slot) continue;
@@ -72,15 +75,16 @@ export function entryHasDetail(
   entry: FetchLogEntry,
   logs: FetchLogEntry[],
   index: number,
-  running?: Pick<FetchLogSnapshot["running"], "vehicle" | "change" | "checkin">,
+  running?: Pick<FetchLogSnapshot["running"], "vehicle" | "change" | "checkin" | "stock_watch">,
 ): boolean {
   if (entry.detail) return true;
-  if (entry.message.includes("开始拉取")) {
+  if (entry.message.includes("开始拉取") || entry.message.includes("开始检查")) {
     if (findPairedFetchResult(logs, index)) return true;
     if (running) {
       if (entry.slot === "vehicle" && running.vehicle) return true;
       if (entry.slot === "change" && running.change) return true;
       if (entry.slot === "checkin" && running.checkin) return true;
+      if (entry.slot === "stock_watch" && running.stock_watch) return true;
     }
   }
   return false;
@@ -90,21 +94,29 @@ export function resolveEntryDetail(
   entry: FetchLogEntry,
   logs: FetchLogEntry[],
   index: number,
-  running?: Pick<FetchLogSnapshot["running"], "vehicle" | "change" | "checkin">,
+  running?: Pick<FetchLogSnapshot["running"], "vehicle" | "change" | "checkin" | "stock_watch">,
 ): Record<string, unknown> | null {
   if (entry.detail) return entry.detail;
   const paired = findPairedFetchResult(logs, index);
   if (paired?.detail) {
     return { ...paired.detail, _fromStartLog: true, pairedMessage: paired.message };
   }
-  if (entry.message.includes("开始拉取")) {
+  if (entry.message.includes("开始拉取") || entry.message.includes("开始检查")) {
     const isRunning =
       running &&
       ((entry.slot === "vehicle" && running.vehicle) ||
         (entry.slot === "change" && running.change) ||
-        (entry.slot === "checkin" && running.checkin));
+        (entry.slot === "checkin" && running.checkin) ||
+        (entry.slot === "stock_watch" && running.stock_watch));
     if (isRunning) {
-      return { kind: entry.slot, result: "pending", message: "拉取进行中，请稍后刷新或展开查看结果" };
+      return {
+        kind: entry.slot,
+        result: "pending",
+        message:
+          entry.slot === "stock_watch"
+            ? "检查进行中，请稍后刷新或展开查看结果"
+            : "拉取进行中，请稍后刷新或展开查看结果",
+      };
     }
   }
   return null;
@@ -264,6 +276,40 @@ export function formatLogDetailRows(detail: Record<string, unknown>): DetailRow[
     }
     if (detail.accumulateDays != null) {
       rows.push({ label: "累计天数", value: `${detail.accumulateDays} 天` });
+    }
+    return rows;
+  }
+
+  if (kind === "stock_watch" && result === "success") {
+    rows.push({ label: "结果", value: "成功" });
+    if (detail.pollSec != null) rows.push({ label: "检查间隔", value: `${detail.pollSec} 秒` });
+    if (detail.cookieConfigured != null) {
+      rows.push({ label: "登录 Cookie", value: detail.cookieConfigured ? "已配置" : "未配置" });
+    }
+    const items = detail.items as
+      | {
+          name?: string;
+          label?: string;
+          detectedText?: string | null;
+          evidence?: string | null;
+          goodsName?: string | null;
+          status?: string;
+        }[]
+      | undefined;
+    items?.forEach((item) => {
+      rows.push({
+        label: `${item.name ?? "商品"} · 检测结果`,
+        value: item.detectedText ?? item.label ?? "无法确认",
+      });
+      if (item.evidence) {
+        rows.push({
+          label: `${item.name ?? "商品"} · 判断依据`,
+          value: item.evidence,
+        });
+      }
+    });
+    if (detail.rawResponse) {
+      rows.push({ label: "接口响应", value: "展开下方「完整 API 响应」查看 goodsDetail 返回" });
     }
     return rows;
   }

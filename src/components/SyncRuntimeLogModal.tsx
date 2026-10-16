@@ -13,7 +13,7 @@ import {
   type FetchLogSnapshot,
   type FetchLogSlot,
 } from "../lib/fetch-log";
-import { fmtTime } from "../lib/vehicle";
+import { fmtLogTime } from "../lib/vehicle";
 
 interface Props {
   onClose: () => void;
@@ -21,7 +21,7 @@ interface Props {
 
 function fmtNext(at: number | null): string {
   if (!at) return "—";
-  return fmtTime(at);
+  return fmtLogTime(at);
 }
 
 function scheduleLine(
@@ -175,8 +175,15 @@ export function SyncRuntimeLogModal({ onClose }: Props) {
                 <summary>下次采集</summary>
                 <p>{scheduleLine("车辆", snapshot.schedule.vehicle, snapshot.running.vehicle)}</p>
                 <p>{scheduleLine("换电", snapshot.schedule.change, snapshot.running.change)}</p>
-                <p>{scheduleLine("签到", snapshot.schedule.checkin, snapshot.running.checkin)}</p>
-              </details>
+              <p>{scheduleLine("签到", snapshot.schedule.checkin, snapshot.running.checkin)}</p>
+              <p>
+                {scheduleLine(
+                  "库存",
+                  snapshot.schedule.stock_watch,
+                  snapshot.running.stock_watch,
+                )}
+              </p>
+            </details>
 
               <section className="runtime-log-list-wrap">
                 <h4>
@@ -211,7 +218,7 @@ export function SyncRuntimeLogModal({ onClose }: Props) {
                               onClick={() => handleEntryClick(entry, i)}
                               aria-expanded={expanded}
                             >
-                              <span className="runtime-log-time">{fmtTime(entry.at)}</span>
+                              <span className="runtime-log-time">{fmtLogTime(entry.at)}</span>
                               <span className="runtime-log-slot">
                                 [{SLOT_LABELS[entry.slot as FetchLogSlot] ?? entry.slot}]
                               </span>

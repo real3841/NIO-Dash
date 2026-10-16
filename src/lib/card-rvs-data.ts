@@ -1,5 +1,6 @@
 import type { VehicleResponse } from "./vehicle";
 import type { CheckinData } from "./checkin";
+import { extractCheckinFields } from "./checkin";
 
 /** 每张卡片对应的 RVS status 字段（及 data 顶层块） */
 const CARD_RVS_KEYS: Record<string, string[]> = {
@@ -67,8 +68,15 @@ export function getCardRvsPayload(
     payload.vehicle_id = status.vehicle_id;
   }
 
-  if (cardId === "connection" && checkin) {
-    payload.checkin_api = checkin;
+  if (cardId === "connection") {
+    if (checkin) {
+      payload.checkin_api = checkin;
+    } else {
+      const widgetCheckin = extractCheckinFields(raw);
+      if (widgetCheckin) {
+        payload.checkin_widget = widgetCheckin;
+      }
+    }
   }
 
   return payload;

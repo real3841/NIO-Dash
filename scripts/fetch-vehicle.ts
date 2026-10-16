@@ -13,8 +13,12 @@ import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
 import { appendFetchLog } from "./fetch-log.js";
 import { buildApiRequestDetail, vehicleErrorDetail, vehicleSuccessDetail } from "./fetch-log-detail.js";
+import { persistCheckinFromPayload } from "./fetch-checkin.js";
 import { normalizeRvsVehiclePayload } from "./nio-rvs.js";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { enrichVehicleFromExtraApis } from "./vehicle-extra.js";
+import { extractErrorKind } from "../src/lib/nio-api-errors.js";
+import type { NioErrorKind } from "../src/lib/nio-api-errors.js";
 import {
   appendSnapshotHistory,
   HISTORY_MAX_POINTS,
@@ -26,21 +30,7 @@ const ROOT = path.resolve(getProjectRoot());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
 loadEnv({ path: path.join(ROOT, ".env") });
 
-function assertVehiclePayload(payload: Record<string, unknown>): void {
-  const code = payload.result_code ?? payload.resultCode;
-  if (code && code !== "success" && code !== "0000") {
-    const desc =
-      payload.display_msg ??
-      payload.message ??
-      payload.debug_msg ??
-      payload.result_desc ??
-      String(code);
-    throw new Error(`车辆 API 失败: ${desc}`);
-  }
-}
-
 function normalizePayload(payload: Record<string, unknown>): Record<string, unknown> {
-  assertVehiclePayload(payload);
   return normalizeRvsVehiclePayload(payload) as Record<string, unknown>;
 }
 
@@ -58,13 +48,14 @@ function appendHistory(snapshot: VehicleSnapshot): void {
   writeJsonAtomic(historyFile, history);
 }
 
-function writeMeta(ok: boolean, error?: string): void {
+function writeMeta(ok: boolean, error?: string, errorKind?: NioErrorKind | null): void {
   const dataDir = getDataDir();
   fs.mkdirSync(dataDir, { recursive: true });
   writeJsonAtomic(getVehicleMetaFile(), {
     ok,
     at: Date.now(),
     error: error ?? null,
+    errorKind: errorKind ?? null,
   });
 }
 
@@ -102,11 +93,13 @@ export async function runVehicleOnce(): Promise<void> {
     }
 
     const normalized = normalizePayload(payload!);
+    const extraNotes = await enrichVehicleFromExtraApis(normalized);
     const snap = snapshotFromPayload(normalized);
 
     const dataDir = getDataDir();
     fs.mkdirSync(dataDir, { recursive: true });
     writeJsonAtomic(dataFile, normalized);
+    persistCheckinFromPayload(normalized, { source: "vehicle_widget" });
     appendHistory(snap);
     writeMeta(true);
 
@@ -115,7 +108,7 @@ export async function runVehicleOnce(): Promise<void> {
     appendFetchLog(
       "vehicle",
       "success",
-      `采样 ${new Date(snap.ts).toLocaleString("zh-CN")} · 电量 ${snap.soc}% · 标准续航 ${snap.range}km · 实际 ${snap.actualRange}km · 里程 ${snap.mileage.toLocaleString()}km`,
+      `采样 ${new Date(snap.ts).toLocaleString("zh-CN")} · 电量 ${snap.soc}% · 标准续航 ${snap.range}km · 实际 ${snap.actualRange}km · 里程 ${snap.mileage.toLocaleString()}km${extraNotes.length ? ` · ${extraNotes.join(" · ")}` : ""}`,
       vehicleSuccessDetail(normalized, snap, apiRequest),
     );
 
@@ -123,8 +116,9 @@ export async function runVehicleOnce(): Promise<void> {
     console.log(`历史 ${getHistoryFile()} · 采样 ${new Date(snap.ts).toLocaleString("zh-CN")}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const errorKind = extractErrorKind(err);
     appendFetchLog("vehicle", "error", `拉取失败：${message}`, vehicleErrorDetail(message, payload, apiRequest));
-    writeMeta(false, message);
+    writeMeta(false, message, errorKind);
     throw err;
   }
 }

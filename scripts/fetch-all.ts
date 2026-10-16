@@ -14,6 +14,7 @@ import { getFetchLogSnapshot } from "./fetch-log.js";
 import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
 import { getCardLayoutFile, handleCardLayoutRequest } from "./card-layout-api.js";
 import { getDataDir } from "./paths.js";
+import { getStorageFilesSnapshot } from "./storage-files.js";
 
 const ROOT = path.resolve(process.cwd());
 loadEnv({ path: path.join(ROOT, "deploy", ".env") });
@@ -48,6 +49,15 @@ function startTriggerServer(): void {
           "Cache-Control": "no-store",
         });
         res.end(JSON.stringify(getFetchLogSnapshot(isFetchRunning())));
+        return;
+      }
+
+      if (pathname === "/api/storage-files") {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify(getStorageFilesSnapshot(dataDir)));
         return;
       }
 

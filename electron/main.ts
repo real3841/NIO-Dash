@@ -1,8 +1,22 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, Notification, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { startAppServer } from "../scripts/app-server.js";
+import { setStockWatchAlertHandler } from "../scripts/stock-watch.js";
 import { createTrayController, type TrayController } from "./tray.js";
+
+/** macOS 26 + Electron 35 上 GPU 进程易崩溃（exit_code=15），禁用硬件加速 */
+if (process.env.NIO_DISABLE_GPU !== "0") {
+  app.disableHardwareAcceleration();
+  for (const sw of [
+    "disable-gpu",
+    "disable-gpu-compositing",
+    "disable-accelerated-2d-canvas",
+    "disable-accelerated-video-decode",
+  ]) {
+    app.commandLine.appendSwitch(sw);
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: Awaited<ReturnType<typeof startAppServer>> | null = null;
@@ -11,10 +25,23 @@ let isQuitting = false;
 let serverPort = 0;
 let userDataDir = "";
 let userEnvFile = "";
+let trayHiddenNotified = false;
+
+function notifyHiddenToTray(): void {
+  if (trayHiddenNotified) return;
+  trayHiddenNotified = true;
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: "蔚来车辆看板",
+    body: "窗口已隐藏，应用仍在菜单栏运行。点击菜单栏图标可重新打开。",
+  });
+  notification.show();
+}
 
 function getUserPaths() {
   const userData = app.getPath("userData");
   return {
+    userData,
     dataDir: path.join(userData, "data"),
     envFile: path.join(userData, "config.env"),
   };
@@ -58,7 +85,7 @@ function ensureConfigFile(envFile: string): boolean {
       "NIO_VEHICLE_POLL_DRIVING_SEC=900",
       "NIO_VEHICLE_POLL_DAY_SEC=1800",
       "NIO_VEHICLE_POLL_NIGHT_SEC=3600",
-      "NIO_CHANGE_POLL_INTERVAL=3600",
+      "NIO_CHANGE_POLL_INTERVAL=86400",
       "NIO_TRAY_DISPLAY=soc,range",
       "NIO_VEHICLE_ACCESS_TOKEN=",
       "NIO_CHANGE_ACCESS_TOKEN=",
@@ -150,7 +177,8 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
+      backgroundThrottling: false,
     },
   });
 
@@ -166,6 +194,19 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("[render-process-gone]", details);
+    const port = serverPort;
+    if (isQuitting || !port) return;
+    const deadWindow = mainWindow;
+    mainWindow = null;
+    if (deadWindow && !deadWindow.isDestroyed()) {
+      deadWindow.destroy();
+    }
+    setTimeout(() => {
+      if (isQuitting || !port) return;
+      void createWindow(port, false).catch((err) => {
+        console.error("[window] recreate after renderer crash failed", err);
+      });
+    }, 400);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -181,6 +222,7 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
     if (!isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
+      notifyHiddenToTray();
     }
   });
 
@@ -191,8 +233,10 @@ async function createWindow(port: number, firstRun: boolean): Promise<void> {
 
 async function boot(): Promise<void> {
   process.env.NIO_APP_MODE = "electron";
+  process.env.NIO_PROJECT_ROOT = app.getAppPath();
 
-  const { dataDir, envFile } = getUserPaths();
+  const { userData, dataDir, envFile } = getUserPaths();
+  process.env.NIO_USER_DATA = userData;
   userDataDir = dataDir;
   userEnvFile = envFile;
   process.env.NIO_DATA_DIR = dataDir;
@@ -205,6 +249,21 @@ async function boot(): Promise<void> {
   const staticDir = resolveStaticDir();
 
   setupTray();
+
+  setStockWatchAlertHandler((items) => {
+    if (!Notification.isSupported()) return;
+    for (const item of items) {
+      const notification = new Notification({
+        title: `${item.name} 有货`,
+        body: item.goodsName ? `${item.goodsName} 现在有货了` : "监控的商品现在有货了",
+      });
+      notification.on("click", () => {
+        if (item.url) void shell.openExternal(item.url);
+        showMainWindow();
+      });
+      notification.show();
+    }
+  });
 
   serverHandle = await startAppServer({
     host: "127.0.0.1",
@@ -228,12 +287,21 @@ async function boot(): Promise<void> {
   await createWindow(serverHandle.port, firstRun);
 }
 
-app.whenReady().then(() => {
-  void boot().catch((err) => {
-    console.error(err);
-    app.quit();
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    showMainWindow();
   });
-});
+
+  app.whenReady().then(() => {
+    void boot().catch((err) => {
+      console.error(err);
+      app.quit();
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   // 保留托盘常驻，关闭窗口不退出

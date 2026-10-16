@@ -1,3 +1,5 @@
+import { mapCoordsFromGcj02 } from "./gcj02";
+
 const CACHE_KEY = "nio_geocode_cache_v1";
 const MAX_ENTRIES = 200;
 /** 约 100m 网格，减少重复请求 */
@@ -47,18 +49,44 @@ export function setCachedGeocode(lat: number, lng: number, address: string): voi
   writeCache(cache);
 }
 
+async function reverseViaServer(lat: number, lng: number): Promise<string | null> {
+  const res = await fetch(
+    `/api/geocode/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`,
+  );
+  if (!res.ok) return null;
+  const json = (await res.json()) as { ok?: boolean; address?: string };
+  if (!json.ok || !json.address) return null;
+  return json.address;
+}
+
+async function reverseViaNominatim(lat: number, lng: number): Promise<string | null> {
+  const wgs = mapCoordsFromGcj02(lat, lng);
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${wgs.lat}&lon=${wgs.lng}&accept-language=zh`,
+    { headers: { "User-Agent": "NioVehicleDashboard/1.7" } },
+  );
+  if (!res.ok) return null;
+  const json = (await res.json()) as { display_name?: string };
+  return json.display_name?.split(",").slice(0, 2).join("，") ?? null;
+}
+
+/** lat/lng 为蔚来 API 原始 GCJ-02 坐标 */
 export async function reverseGeocodeCached(lat: number, lng: number): Promise<string | null> {
   const cached = getCachedGeocode(lat, lng);
   if (cached) return cached;
 
   try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh`,
-      { headers: { "User-Agent": "NioVehicleDashboard/1.4" } },
-    );
-    if (!res.ok) return null;
-    const json = (await res.json()) as { display_name?: string };
-    const address = json.display_name?.split(",").slice(0, 2).join("，") ?? null;
+    const fromServer = await reverseViaServer(lat, lng);
+    if (fromServer) {
+      setCachedGeocode(lat, lng, fromServer);
+      return fromServer;
+    }
+  } catch {
+    /* 无本地 API 服务时回退 OSM */
+  }
+
+  try {
+    const address = await reverseViaNominatim(lat, lng);
     if (address) setCachedGeocode(lat, lng, address);
     return address;
   } catch {

@@ -29,8 +29,36 @@ export function getChangeMetaFile(): string {
   return path.join(getDataDir(), "last-fetch-change.json");
 }
 
+export function getChangeLedgerFile(): string {
+  return path.join(getDataDir(), "change-ledger.json");
+}
+
+export function getChangeLedgerStateFile(): string {
+  return path.join(getDataDir(), "change-ledger-state.json");
+}
+
 export function getCheckinFile(): string {
   return path.join(getDataDir(), "checkin.json");
+}
+
+export function getJourneyFile(): string {
+  return path.join(getDataDir(), "journey.json");
+}
+
+export function getDailyFile(): string {
+  return path.join(getDataDir(), "daily.json");
+}
+
+export function getPowerFile(): string {
+  return path.join(getDataDir(), "power.json");
+}
+
+export function getJourneyHistoryFile(): string {
+  return path.join(getDataDir(), "journey-history.json");
+}
+
+export function getDailyHistoryFile(): string {
+  return path.join(getDataDir(), "daily-history.json");
 }
 
 export function getCheckinMetaFile(): string {

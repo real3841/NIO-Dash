@@ -4,9 +4,10 @@ interface Props {
   title: string;
   payload: Record<string, unknown>;
   onClose: () => void;
+  kind?: string;
 }
 
-export function CardRvsModal({ title, payload, onClose }: Props) {
+export function CardRvsModal({ title, payload, onClose, kind = "RVS 原始数据" }: Props) {
   const json = JSON.stringify(payload, null, 2);
 
   useEffect(() => {
@@ -27,7 +28,7 @@ export function CardRvsModal({ title, payload, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <header className="card-rvs-head">
-          <h3 id="card-rvs-title">{title} · RVS 原始数据</h3>
+          <h3 id="card-rvs-title">{title} · {kind}</h3>
           <div className="card-rvs-actions">
             <button
               type="button"

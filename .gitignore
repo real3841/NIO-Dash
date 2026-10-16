@@ -1,4 +1,5 @@
 node_modules
+har/
 dist
 electron-dist
 release
