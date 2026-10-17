@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { recordAuthSlot } from "./auth-slots.js";
 import { fetchFromApi, loadFetchConfig } from "./nio-api.js";
 import { getDailyFile, getDailyHistoryFile, getJourneyFile, getJourneyHistoryFile } from "./paths.js";
 import { writeJsonAtomic } from "./atomic-write.js";
@@ -122,8 +123,10 @@ export async function enrichVehicleFromExtraApis(payload: Record<string, unknown
   if (statusUrl) {
     try {
       mergeStatus(payload, await readExtra(statusUrl, headers));
+      recordAuthSlot("status", true);
       notes.push("车况整包已合并");
     } catch (err) {
+      recordAuthSlot("status", false, err);
       notes.push(`车况整包失败：${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -141,9 +144,11 @@ export async function enrichVehicleFromExtraApis(payload: Record<string, unknown
         journey: isRecord(data.journey) ? data.journey : null,
       });
       const kept = isRecord(data.journey) && appendJourneyHistory(data.journey);
+      recordAuthSlot("journey", true);
       notes.push(kept ? "最近行程已更新并记入路径" : "最近行程已更新");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      recordAuthSlot("journey", false, err);
       writeJourney({ ok: false, error: message, journey: null });
       notes.push(`最近行程失败：${message}`);
     }
@@ -164,9 +169,11 @@ export async function enrichVehicleFromExtraApis(payload: Record<string, unknown
       if (typeof data.daily_mileage === "number") {
         appendDailyHistory(data.daily_mileage, typeof data.mileage === "number" ? data.mileage : undefined);
       }
+      recordAuthSlot("daily", true);
       notes.push("当日里程已更新");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      recordAuthSlot("daily", false, err);
       writeDaily({ ok: false, error: message });
       notes.push(`当日里程失败：${message}`);
     }

@@ -57,7 +57,7 @@ function SortableItem({
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="sortable-card-item">
+    <div ref={setNodeRef} style={style} className="sortable-card-item" data-card={id}>
       {children({
         dragHandleProps: { ...attributes, ref: setActivatorNodeRef },
         dragListeners: listeners ?? {},

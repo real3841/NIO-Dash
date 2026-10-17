@@ -16,6 +16,7 @@ import { buildApiRequestDetail, vehicleErrorDetail, vehicleSuccessDetail } from 
 import { persistCheckinFromPayload } from "./fetch-checkin.js";
 import { normalizeRvsVehiclePayload } from "./nio-rvs.js";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { recordAuthSlot } from "./auth-slots.js";
 import { enrichVehicleFromExtraApis } from "./vehicle-extra.js";
 import { extractErrorKind } from "../src/lib/nio-api-errors.js";
 import type { NioErrorKind } from "../src/lib/nio-api-errors.js";
@@ -93,6 +94,7 @@ export async function runVehicleOnce(): Promise<void> {
     }
 
     const normalized = normalizePayload(payload!);
+    recordAuthSlot("widget", true);
     const extraNotes = await enrichVehicleFromExtraApis(normalized);
     const snap = snapshotFromPayload(normalized);
 
@@ -117,6 +119,7 @@ export async function runVehicleOnce(): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const errorKind = extractErrorKind(err);
+    recordAuthSlot("widget", false, err);
     appendFetchLog("vehicle", "error", `拉取失败：${message}`, vehicleErrorDetail(message, payload, apiRequest));
     writeMeta(false, message, errorKind);
     throw err;

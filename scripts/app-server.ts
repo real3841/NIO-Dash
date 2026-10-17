@@ -15,7 +15,8 @@ import {
 } from "./fetch-server.js";
 import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
 import { appendFetchLog, getFetchLogSnapshot } from "./fetch-log.js";
-import { applyQuickAuth } from "./quick-auth.js";
+import { authSlotSnapshot } from "./auth-slots.js";
+import { applyQuickAuth, applySlotAuth } from "./quick-auth.js";
 import { amapReverseGeocode, isAmapGeocodeConfigured } from "./amap-geocode.js";
 import { getStorageFilesSnapshot } from "./storage-files.js";
 import { handleStockWatchRequest, setStockWatchSchedulerHooks } from "./stock-watch-api.js";
@@ -147,23 +148,40 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
         return;
       }
 
+      if (pathname === "/api/auth-slots" && method === "GET") {
+        noCache(res);
+        json(res, 200, { ok: true, slots: authSlotSnapshot() });
+        return;
+      }
+
       if (pathname === "/api/quick-auth" && method === "POST") {
         noCache(res);
         let text = "";
+        let slot = "";
+        let url = "";
+        let token = "";
         try {
           const chunks: Buffer[] = [];
           for await (const chunk of req) chunks.push(chunk as Buffer);
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as { text?: unknown };
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as {
+            text?: unknown;
+            slot?: unknown;
+            url?: unknown;
+            token?: unknown;
+          };
           text = typeof body.text === "string" ? body.text : "";
+          slot = typeof body.slot === "string" ? body.slot : "";
+          url = typeof body.url === "string" ? body.url : "";
+          token = typeof body.token === "string" ? body.token : "";
         } catch {
           json(res, 400, { ok: false, error: "请求格式不对" });
           return;
         }
-        if (!text.trim()) {
-          json(res, 400, { ok: false, error: "请粘贴 Bearer Token、抓包原文或选择 HAR 文件" });
+        if (!text.trim() && !slot) {
+          json(res, 400, { ok: false, error: "请先选中失效的接口，再填写地址和 Bearer Token" });
           return;
         }
-        const result = applyQuickAuth(text);
+        const result = text.trim() ? applyQuickAuth(text) : applySlotAuth({ slot, url, token });
         if (!result.ok) {
           json(res, 400, { ok: false, error: result.warnings.join("；") || "没有可用的内容", result });
           return;
@@ -180,12 +198,12 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
             .join(" · ")}`,
         );
         const runs: Record<string, string> = {};
-        for (const slot of ["vehicle", "change"] as const) {
+        for (const target of ["vehicle", "change"] as const) {
           try {
-            await triggerFetch(slot);
-            runs[slot] = "ok";
+            await triggerFetch(target);
+            runs[target] = "ok";
           } catch (err) {
-            runs[slot] = err instanceof Error ? err.message : String(err);
+            runs[target] = err instanceof Error ? err.message : String(err);
           }
         }
         scheduler?.rescheduleChange(false);

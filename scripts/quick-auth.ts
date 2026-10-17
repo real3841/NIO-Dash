@@ -1,4 +1,5 @@
 import { config as loadEnv } from "dotenv";
+import { authSlotById, authSlotMatchesUrl } from "../src/lib/auth-slots.js";
 import { getEnvFilePath, parseEnvFile, readEnvFileRaw, saveEnvSection } from "./env-file.js";
 import { importPowerFromEntries, type CapturedEntry } from "./power-home.js";
 
@@ -212,4 +213,60 @@ export function applyQuickAuth(input: string): QuickAuthResult {
     power,
     warnings,
   };
+}
+
+function firstUrl(text: string): string {
+  return text.match(/https:\/\/[^\s"'<>]+/)?.[0] ?? "";
+}
+
+/** 选中一条接口后，上面贴它的完整地址，下面贴 Bearer。Token 仍写入车况、换电和补充接口。 */
+export function applySlotAuth(input: { slot?: string; url?: string; token?: string }): QuickAuthResult {
+  const slot = authSlotById(input.slot);
+  const warnings: string[] = [];
+  if (!slot) {
+    return { ok: false, tokenUpdated: false, updated: [], power: null, warnings: ["请先选中要更新的接口"] };
+  }
+
+  const urlText = input.url?.trim() ?? "";
+  const tokenText = input.token?.trim() ?? "";
+  const token = tokenFromText(tokenText) || tokenFromText(urlText);
+  const url = firstUrl(urlText);
+  const updates: Record<string, string> = {};
+  const updated: string[] = [];
+
+  if (token) {
+    const current = parseEnvFile(readEnvFileRaw());
+    for (const key of TOKEN_KEYS) updates[key] = token;
+    if (current.NIO_CHECKIN_ACCESS_TOKEN?.trim()) updates.NIO_CHECKIN_ACCESS_TOKEN = token;
+  }
+
+  if (url) {
+    if (!authSlotMatchesUrl(slot, url)) {
+      warnings.push(`这不是${slot.label}的地址。上面要找的是 ${slot.method} ${slot.address}`);
+    } else {
+      updates[slot.envKey] = slot.id === "change" ? changeBaseUrl(url) : url;
+      if (slot.id === "change") updates.NIO_CHANGE_API_MODE = "cursor";
+      updated.push(slot.label);
+    }
+  }
+
+  if (!token && updated.length === 0) {
+    warnings.push(
+      slot.needsUrl
+        ? "完整地址贴在上面，Bearer Token 贴在下面"
+        : "这条只需要把 Bearer Token 贴在下面",
+    );
+    return { ok: false, tokenUpdated: false, updated: [], power: null, warnings };
+  }
+
+  if (slot.needsUrl && !url && token) {
+    warnings.push(`${slot.label}如果是签名失效，还要把这条的完整地址贴在上面`);
+  }
+
+  if (Object.keys(updates).length > 0) {
+    saveEnvSection(updates);
+    loadEnv({ path: getEnvFilePath(), override: true });
+  }
+
+  return { ok: true, tokenUpdated: Boolean(token), updated, power: null, warnings };
 }

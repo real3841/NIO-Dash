@@ -3,9 +3,11 @@
 蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
 
 ![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.9.4-green)
+![Version](https://img.shields.io/badge/version-1.9.9-green)
 ![Electron](https://img.shields.io/badge/Electron-35-47848F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
+
+![车况示意图](docs/vehicle-hero.png)
 
 ## 功能概览
 
@@ -234,6 +236,26 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run serve:api` | 仅 API 服务 |
 
 ## 更新日志
+
+### v1.9.9
+
+- **车况示意图**：车头朝左放在中间，家充桩移到右侧；靠右的悬停提示向左展开，不再被裁掉
+
+### v1.9.8
+
+- **车况示意图**：座舱提示改到图内左上角，不再挡住下面的卡片
+
+### v1.9.7
+
+- **界面**：数据同步里可在老界面和新界面之间切换。新界面跟随系统深浅色，顶部有车况示意图
+
+### v1.9.6
+
+- **更新 Token**：选中失效的接口，完整地址在上，Bearer Token 在下
+
+### v1.9.5
+
+- **日增里程**：标题和累计按一位小数显示，不再出现一长串小数
 
 ### v1.9.4
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import type { ChangeResponse } from "../src/lib/change.js";
 import { extractErrorKind, classifyChangeApiFailure } from "../src/lib/nio-api-errors.js";
+import { recordAuthSlot } from "./auth-slots.js";
 import type { NioErrorKind } from "../src/lib/nio-api-errors.js";
 import {
   BACKFILL_PAGE_GAP_MS,
@@ -214,6 +215,7 @@ async function runCursorSync(changeFile: string): Promise<void> {
 
   state = { ...state, backfillComplete: reachedEnd, backfillOffset: 0, lastBackfillAt: Date.now() };
   persistLedger(ledger, state, changeFile);
+  recordAuthSlot("change", true);
   writeMeta(true);
   syncPublicData();
   const total = Object.keys(ledger).length;
@@ -307,6 +309,7 @@ export async function runChangeOnce(): Promise<void> {
     }
 
     persistLedger(ledger, state, changeFile);
+    recordAuthSlot("change", true);
     writeMeta(true);
     syncPublicData();
     appendFetchLog(
@@ -336,6 +339,7 @@ export async function runChangeOnce(): Promise<void> {
       `拉取失败：${message}`,
       changeErrorDetail(message, httpStatus, rawBody, apiRequest),
     );
+    recordAuthSlot("change", false, err);
     writeMeta(false, message, errorKind);
     throw err;
   }

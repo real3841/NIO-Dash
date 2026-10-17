@@ -259,6 +259,17 @@ function dailyDeltaTimestamp(day: string): number {
   return start + 12 * 60 * 60 * 1000;
 }
 
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function formatKm(value: number, signed = false): string {
+  const rounded = roundTenth(value);
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  if (!signed || rounded <= 0) return text;
+  return `+${text}`;
+}
+
 function formatDailyChartCaption(
   dayCount: number,
   totalDelta: number,
@@ -268,9 +279,8 @@ function formatDailyChartCaption(
   signed = true,
 ): string {
   if (dayCount === 0) return `${startDate} — ${endDate} 暂无数据`;
-  const sign = signed && totalDelta >= 0 ? "+" : "";
-  const shown = signed ? String(totalDelta) : totalDelta.toFixed(1);
-  return `${dayCount} 天 · 累计 ${sign}${shown}${unit}`;
+  const shown = signed ? formatKm(totalDelta, true) : roundTenth(totalDelta).toFixed(1);
+  return `${dayCount} 天 · 累计 ${shown}${unit}`;
 }
 
 function formatWindowLabel(ts: number, dailyMileage: boolean): string {
@@ -279,8 +289,7 @@ function formatWindowLabel(ts: number, dailyMileage: boolean): string {
 }
 
 function formatDeltaValue(value: number): string {
-  const sign = value >= 0 ? "+" : "";
-  return `${sign}${value}km`;
+  return `${formatKm(value, true)}km`;
 }
 
 function tooltipPosition(
@@ -411,10 +420,11 @@ function MiniChart({
     };
   }, [series, dailyMileage, pickValue, dailyOverrides, dailyPoints, startDate, endDate]);
 
-  const totalDelta = useMemo(
-    () => (dailyMileage || rangeSum ? values.reduce((sum, value) => sum + value, 0) : 0),
-    [dailyMileage, rangeSum, values],
-  );
+  const totalDelta = useMemo(() => {
+    if (!(dailyMileage || rangeSum)) return 0;
+    const sum = values.reduce((total, value) => total + value, 0);
+    return dailyMileage ? roundTenth(sum) : sum;
+  }, [dailyMileage, rangeSum, values]);
 
   const rangeDetail = useMemo(() => {
     if (!rangeSum || !dailyPoints) return null;
@@ -601,7 +611,7 @@ function MiniChart({
                 : "—"
               : dailyMileage
                 ? values.length > 0
-                  ? `${totalDelta >= 0 ? "+" : ""}${totalDelta} km`
+                  ? `${formatKm(totalDelta, true)} km`
                   : "—"
                 : `${last ?? "—"}${unit}`}
         </strong>

@@ -770,7 +770,10 @@ export const DashboardCards = memo(function DashboardCards({
             {daily?.error && <p className="nas-error">{daily.error}</p>}
             <BlockRows
               rows={[
-                { label: "今天", value: daily?.daily_mileage != null ? `${daily.daily_mileage} km` : "—" },
+                {
+                  label: "今天",
+                  value: daily?.daily_mileage != null ? `${Math.round(daily.daily_mileage * 10) / 10} km` : "—",
+                },
                 { label: "累计", value: daily?.mileage != null ? `${daily.mileage.toLocaleString()} km` : "—" },
                 { label: "激活", value: daily?.activate_days != null ? `${daily.activate_days} 天` : "—" },
               ]}

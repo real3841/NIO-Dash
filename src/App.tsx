@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import pkg from "../package.json";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
+import { VehicleHero } from "./components/VehicleHero";
 import { SwapHistory } from "./components/SwapHistory";
 import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
@@ -13,6 +14,7 @@ import { saveDrawerOpen, TREND_DRAWER_KEY } from "./lib/drawer-state";
 import { reverseGeocodeCached } from "./lib/geocode-cache";
 import { mapCoordsFromGcj02 } from "./lib/gcj02";
 import { hydrateCardLayout } from "./lib/card-layout";
+import { applyUiLook, readUiLook, type UiLook } from "./lib/ui-look";
 import {
   DEFAULT_CHANGE_POLL_SEC,
   formatPollSummary,
@@ -113,6 +115,7 @@ export default function App() {
   const [dailyHistory, setDailyHistory] = useState<DailyHistory>({});
   const [powerData, setPowerData] = useState<PowerFile | null>(null);
   const [checkinMeta, setCheckinMeta] = useState<FetchMeta | null>(null);
+  const [uiLook, setUiLook] = useState<UiLook>(() => readUiLook());
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).get("setup") === "1",
   );
@@ -449,6 +452,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    applyUiLook(uiLook);
+  }, [uiLook]);
+
+  useEffect(() => {
+    const onLook = (event: Event) => setUiLook((event as CustomEvent<UiLook>).detail);
+    window.addEventListener("nio-ui-look", onLook);
+    return () => window.removeEventListener("nio-ui-look", onLook);
+  }, []);
+
+  useEffect(() => {
     void refreshStockWatch(false);
     const syncTimer = window.setInterval(() => {
       void refreshStockWatch(false);
@@ -618,6 +631,8 @@ export default function App() {
           onQuickAuthDone={() => refresh("all", false)}
         />
       )}
+
+      {uiLook === "new" && <VehicleHero status={s} power={powerData} />}
 
       <DashboardCards
         data={data!}

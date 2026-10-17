@@ -15,6 +15,7 @@ import { syncPublicData } from "./sync-public-data.js";
 import { isDirectCliInvocation } from "./cli-main.js";
 import { appendFetchLog } from "./fetch-log.js";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { recordAuthSlot } from "./auth-slots.js";
 import { buildApiRequestDetail, checkinErrorDetail, checkinSuccessDetail } from "./fetch-log-detail.js";
 
 const ROOT = path.resolve(getProjectRoot());
@@ -81,6 +82,7 @@ export async function runCheckinOnce(): Promise<void> {
   console.log(`请求 GET ${config.url}`);
   const apiRequest = buildApiRequestDetail({ url: config.url, method: "GET" });
   const payload = await fetchCheckinFromApi(config);
+  recordAuthSlot("checkin", true);
   persistCheckinFromPayload(payload, { source: "checkin_api", runDay: day });
   const checkedIn = payload.checked_in === true;
   const days = payload.continuous_days ?? 0;
@@ -119,6 +121,7 @@ export async function runCheckinIfDue(now = new Date()): Promise<boolean> {
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      recordAuthSlot("checkin", false, err);
       appendFetchLog("checkin", "error", `拉取失败：${message}`, checkinErrorDetail(message, apiRequest));
       writeMeta(false, day, message);
       console.warn("[checkin]", message);

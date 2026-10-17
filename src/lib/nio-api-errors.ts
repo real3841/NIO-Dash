@@ -41,7 +41,7 @@ export function classifyVehicleApiFailure(
 
   if (code === "sign_failed" || codestr.toLowerCase().includes("sign")) {
     return new NioSignError(
-      `签名被拒绝（${codestr || "sign_failed"}）：抓包的 URL 可能已过期，请重新从 App 复制完整 status 请求 URL，而非更换 Token。`,
+      `签名被拒绝（${codestr || "sign_failed"}）：打开「更新 Token」，选中失效的那条，把完整地址贴在上面。`,
     );
   }
 
@@ -55,7 +55,7 @@ export function classifyVehicleApiFailure(
     blob.includes("unauthor")
   ) {
     return new NioAuthError(
-      `Token 被拒绝（HTTP ${httpStatus}${codestr ? ` · ${codestr}` : ""}）：请在「数据同步」更新 Authorization Token。`,
+      `Token 被拒绝（HTTP ${httpStatus}${codestr ? ` · ${codestr}` : ""}）：打开「更新 Token」，把新的 Bearer 贴在下面。`,
     );
   }
 
@@ -84,7 +84,7 @@ export function classifyChangeApiFailure(
     msg.includes("用户名不能为空")
   ) {
     return new NioAuthError(
-      `换电 Token 无效或与车辆 Token 不一致（${msg || code || httpStatus}）；请更新 NIO_CHANGE_ACCESS_TOKEN，或留空以沿用车辆 Token。`,
+      `换电 Token 无效（${msg || code || httpStatus}）。打开「更新 Token」，选换电订单，把新的 Bearer 贴在下面。`,
     );
   }
 
@@ -105,9 +105,9 @@ export function errorKindLabel(kind: NioErrorKind | null | undefined): string {
 export function errorKindHint(kind: NioErrorKind | null | undefined): string | null {
   switch (kind) {
     case "sign":
-      return "请重新抓包复制完整的车辆 status URL（含 sign / timestamp / field 列表），不是换 Token。";
+      return "打开「更新 Token」，选中失效的那条，完整地址贴在上面。";
     case "auth":
-      return "请更新 Authorization Token；若 Token 刚换过仍失败，再检查 URL 是否仍有效。";
+      return "打开「更新 Token」，把新的 Bearer 贴在下面。";
     default:
       return null;
   }

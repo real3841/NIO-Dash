@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ApiConfigStatus } from "../lib/api-status";
 import type { FetchMeta } from "../lib/storage";
 import { ApiStatusBadge } from "./ApiStatusBadge";
@@ -9,11 +10,13 @@ import { StockWatchLoginPanel } from "./StockWatchLoginPanel";
 import { SyncRuntimeLogPanel } from "./SyncRuntimeLogPanel";
 import type { StockWatchState } from "../lib/stock-watch";
 import { TrayDisplaySettings, trayDisplayMeta } from "./TrayDisplaySettings";
+import { applyUiLook, readUiLook, type UiLook } from "../lib/ui-look";
 
 export type SyncPanelId =
   | "files"
   | "tray"
   | "cards"
+  | "look"
   | "vehicle"
   | "change"
   | "checkin"
@@ -127,6 +130,15 @@ export function SyncControlBar({
           >
             卡片管理
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activePanel === "look"}
+            className={`sync-hub-chip${activePanel === "look" ? " active" : ""}`}
+            onClick={() => toggle("look")}
+          >
+            界面
+          </button>
         </div>
 
         <span className="sync-hub-divider" aria-hidden="true" />
@@ -211,6 +223,39 @@ export function SyncControlBar({
         />
       )}
       {activePanel === "cards" && <CardLayoutSettings embedded />}
+      {activePanel === "look" && <LookSettings />}
+    </div>
+  );
+}
+
+function LookSettings() {
+  const [look, setLook] = useState<UiLook>(() => readUiLook());
+  const choose = (next: UiLook) => {
+    setLook(next);
+    applyUiLook(next);
+  };
+  return (
+    <div className="sync-hub-panel-body">
+      <p className="muted">老界面是原来的浅色卡片。新界面跟随系统深浅色，并在顶部显示车况示意图。</p>
+      <div className="look-options" role="radiogroup" aria-label="界面">
+        {(
+          [
+            ["classic", "老界面"],
+            ["new", "新界面"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={look === id}
+            className={`look-option${look === id ? " active" : ""}`}
+            onClick={() => choose(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
