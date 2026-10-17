@@ -54,6 +54,7 @@ interface ApiSettingsProps {
   onStockWatchPollSecChange?: (pollSec: number) => void | Promise<void>;
   onSaveStockWatchAuth?: (auth: { cookie?: string; token?: string }) => boolean | Promise<boolean>;
   onQuickAuthDone?: () => void | Promise<void>;
+  initialPanel?: SyncPanelId;
 }
 
 function metaLine(meta: FetchMeta | null | undefined): string {
@@ -80,13 +81,14 @@ export function ApiSettings({
   onStockWatchPollSecChange,
   onSaveStockWatchAuth,
   onQuickAuthDone,
+  initialPanel = null,
 }: ApiSettingsProps) {
   const [envConfig, setEnvConfig] = useState<EnvConfigResponse | null>(null);
   const [checkinTesting, setCheckinTesting] = useState(false);
   const [checkinTestMsg, setCheckinTestMsg] = useState<string | null>(null);
   const [vehicleDraft, setVehicleDraft] = useState<VehicleEnv | null>(null);
   const [changeDraft, setChangeDraft] = useState<ChangeEnv | null>(null);
-  const [activePanel, setActivePanel] = useState<SyncPanelId>(null);
+  const [activePanel, setActivePanel] = useState<SyncPanelId>(initialPanel);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [savingVehicle, setSavingVehicle] = useState(false);
   const [savingChange, setSavingChange] = useState(false);

@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import {
   AddressPill,
   DashCard,
@@ -65,6 +65,7 @@ import { localDayKey } from "../lib/date-utils";
 import { useCardLayout } from "../hooks/useCardLayout";
 import { SortableCardGrid, type CardControls } from "./SortableCardGrid";
 import { CardRvsModal } from "./CardRvsModal";
+import type { UiLook } from "../lib/ui-look";
 
 interface Props {
   data: VehicleResponse;
@@ -76,7 +77,105 @@ interface Props {
   stockWatchLoading?: boolean;
   onRefreshStockWatch?: (targetId?: string) => void;
   power?: PowerFile | null;
+  look?: UiLook;
+  pollPills?: string[];
 }
+
+type Tone = "" | "blue" | "warm" | "hot";
+type BoardTab = "all" | "car" | "charge" | "swap" | "system";
+
+const BIG_CARDS: Record<string, { tab: BoardTab; tone: Tone }> = {
+  battery: { tab: "car", tone: "blue" },
+  daily_mileage: { tab: "car", tone: "" },
+  recent_journey: { tab: "car", tone: "" },
+  home_charger: { tab: "charge", tone: "warm" },
+};
+
+const SMALL_SECTIONS: Array<{ tab: Exclude<BoardTab, "all">; title: string; ids: string[] }> = [
+  {
+    tab: "car",
+    title: "车况",
+    ids: [
+      "doors_visual",
+      "window",
+      "tyre",
+      "light",
+      "temperature",
+      "modes",
+      "seat_heat",
+      "exterior_detail",
+      "key",
+      "vehicle_info",
+      "frdg",
+      "box",
+      "special",
+      "nearby_car",
+      "trip_share",
+    ],
+  },
+  { tab: "charge", title: "充电", ids: ["charging", "charge_order", "lv_batt"] },
+  { tab: "swap", title: "换电与券", ids: ["power_swap_order", "offcar_power_swap", "stock_swap", "stock_drive"] },
+  { tab: "system", title: "系统", ids: ["software_gps", "connection", "maintain", "remote_operate", "device"] },
+];
+
+const BOARD_TABS: Array<{ id: BoardTab; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "car", label: "车况" },
+  { id: "charge", label: "充电" },
+  { id: "swap", label: "换电与券" },
+  { id: "system", label: "系统" },
+];
+
+const NO_CONTROLS: CardControls = { dragHandleProps: {}, dragListeners: {}, isDragging: false };
+
+function cardIcon(id: string): ReactNode {
+  switch (id) {
+    case "battery":
+    case "lv_batt":
+      return <IconBattery />;
+    case "doors_visual":
+      return <IconDoor />;
+    case "window":
+      return <IconWindow />;
+    case "tyre":
+      return <IconTyre />;
+    case "light":
+      return <IconLight />;
+    case "temperature":
+    case "frdg":
+      return <IconTemp />;
+    case "modes":
+      return <IconModes />;
+    case "seat_heat":
+      return <IconSeat />;
+    case "key":
+    case "nearby_car":
+      return <IconKey />;
+    case "connection":
+    case "device":
+    case "remote_operate":
+      return <IconWifi />;
+    case "maintain":
+    case "special":
+      return <IconWrench />;
+    case "software_gps":
+    case "box":
+    case "stock_swap":
+    case "stock_drive":
+      return <IconCube />;
+    case "recent_journey":
+      return <IconGps />;
+    case "charging":
+    case "charge_order":
+    case "home_charger":
+    case "power_swap_order":
+    case "offcar_power_swap":
+      return <IconPlug />;
+    default:
+      return <IconCar />;
+  }
+}
+
 
 function doorOpen(status: number): boolean {
   return status !== 1;
@@ -107,11 +206,24 @@ export const DashboardCards = memo(function DashboardCards({
   stockWatchLoading = false,
   onRefreshStockWatch,
   power,
+  look = "new",
+  pollPills = [],
 }: Props) {
   const monthKeyNow = localDayKey().slice(0, 7);
   const [layout, updateLayout] = useCardLayout("vehicle", VEHICLE_CARDS);
   const [rvsModal, setRvsModal] = useState<{ title: string; payload: Record<string, unknown> } | null>(null);
   const [certOpen, setCertOpen] = useState(false);
+  const [boardTab, setBoardTab] = useState<BoardTab>("all");
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
   const s = extractVehicleStatus(data);
   if (!s) {
     return (
@@ -840,6 +952,232 @@ export const DashboardCards = memo(function DashboardCards({
         return null;
     }
   };
+
+  const smallSummary = (id: string): { text: string; tone: Tone } => {
+    switch (id) {
+      case "doors_visual":
+        if (openCount > 0) return { text: `${openCount} 处开启 · ${locked ? "已上锁" : "未上锁"}`, tone: "hot" };
+        return { text: `全部关闭 · ${locked ? "已上锁" : "未上锁"}`, tone: locked ? "" : "hot" };
+      case "window": {
+        const w = (s.window_status ?? {}) as Record<string, number>;
+        const open = ["win_front_left_posn", "win_front_right_posn", "win_rear_left_posn", "win_rear_right_posn"].filter(
+          (key) => (w[key] ?? 0) > 0,
+        ).length;
+        const roof = (w.sun_roof_posn ?? 0) > 0;
+        if (open || roof) return { text: [open ? `${open} 扇窗开着` : null, roof ? "天窗开着" : null].filter(Boolean).join(" · "), tone: "warm" };
+        return { text: "全部关闭", tone: "" };
+      }
+      case "tyre": {
+        const t = statusBlock(s, "tyre_status");
+        const presses = ["front_left", "front_right", "rear_left", "rear_right"].map((k) => {
+          const v = t?.[`${k}_wheel_press_bar`];
+          return typeof v === "number" ? v : null;
+        });
+        if (presses.every((p) => p == null)) return { text: "暂无数据", tone: "" };
+        const bad = presses.some((p) => p != null && (p < 2.2 || p > 3.4));
+        return { text: `${presses.map((p) => (p == null ? "—" : p.toFixed(1))).join(" / ")} bar`, tone: bad ? "hot" : "" };
+      }
+      case "light": {
+        const l = statusBlock(s, "light_status");
+        const on = [
+          (l?.head_light_on as number) >= 1 ? "大灯" : null,
+          (l?.day_ti_runng_li_sts as number) >= 1 ? "日行灯" : null,
+          (l?.parking_light_le_on as number) >= 1 || (l?.parking_light_ri_on as number) >= 1 ? "示宽灯" : null,
+        ].filter(Boolean);
+        return on.length ? { text: `${on.join("、")}开着`, tone: "warm" } : { text: "全部关闭", tone: "" };
+      }
+      case "temperature":
+        return {
+          text: `车内 ${s.hvac_status.temperature}° · 车外 ${s.hvac_status.outside_temperature}°${s.hvac_status.air_conditioner_on ? " · 空调开" : ""}`,
+          tone: s.hvac_status.air_conditioner_on ? "warm" : "",
+        };
+      case "modes": {
+        const on = modes.filter((m) => m.on).map((m) => m.label);
+        if (defenderWarnCount > 0) return { text: `守卫告警 ${defenderWarnCount} 次`, tone: "hot" };
+        return on.length ? { text: on.join(" · "), tone: "warm" } : { text: "全部关闭", tone: "" };
+      }
+      case "seat_heat": {
+        const on = heatItems.filter((item) => item.value !== "关闭" && item.value !== "—").map((item) => `${item.label} ${item.value}`);
+        return on.length ? { text: on.slice(0, 2).join(" · "), tone: "warm" } : { text: "全部关闭", tone: "" };
+      }
+      case "exterior_detail":
+        return { text: typeof extExtra.vehl_mode === "number" ? vehlModeLabel(extExtra.vehl_mode) : "—", tone: "" };
+      case "key": {
+        const k = statusBlock(s, "key_status");
+        return { text: `近车解锁 ${onOff(k?.approach_door_unlock_on_off as number)}`, tone: "" };
+      }
+      case "vehicle_info":
+        return {
+          text: `${s.exterior_status.mileage.toLocaleString()} km · ${vehicleStateLabel(s.exterior_status.vehicle_state)}`,
+          tone: "",
+        };
+      case "charging":
+        return {
+          text: `${chargeStateLabel(s.soc_status.charge_state)} · 限充 ${socExtra.lock_soc ?? "—"}%`,
+          tone: s.soc_status.charge_state === 1 ? "blue" : "",
+        };
+      case "software_gps":
+        return fotaUpdating
+          ? { text: fotaPercent != null ? `更新中 ${fotaPercent}%` : "更新中", tone: "blue" }
+          : { text: `v${version.replace(/^v/i, "")} · 已是最新`, tone: "" };
+      case "connection":
+        return {
+          text: `${s.connection_status.connected ? "在线" : "离线"}${checkin ? ` · 连签 ${checkin.continuous_days} 天` : ""}`,
+          tone: s.connection_status.connected ? "" : "hot",
+        };
+      case "maintain":
+        return {
+          text: maintainStatusLabel(s.maintain_status.maintain_status),
+          tone: s.maintain_status.maintain_status >= 1 ? "hot" : "",
+        };
+      case "stock_swap":
+      case "stock_drive": {
+        const item = stockWatch?.items.find((entry) => entry.id === (id === "stock_swap" ? "swap" : "drive"));
+        const tone = stockStatusTone(item?.status ?? "unknown");
+        return {
+          text: stockWatchLoading ? "检查中…" : item?.label ?? "尚未检查",
+          tone: tone === "success" ? "warm" : tone === "warning" ? "hot" : "",
+        };
+      }
+      case "trip_share": {
+        const v = statusBlock(s, "trip_share_status")?.status;
+        return { text: typeof v === "number" ? tripShareLabel(v) : "暂无数据", tone: v === 2 ? "blue" : "" };
+      }
+      case "nearby_car": {
+        const b = statusBlock(s, "nearby_car_ctrl");
+        if (!b) return { text: "暂无数据", tone: "" };
+        return { text: `授权 ${b.has_auth ? "是" : "否"} · 登录 ${b.has_login ? "是" : "否"}`, tone: "" };
+      }
+      case "special": {
+        const b = statusBlock(s, "special_status");
+        if (!b) return { text: "暂无数据", tone: "" };
+        return { text: b.repaired ? "有维修标记" : "无维修标记", tone: b.repaired ? "warm" : "" };
+      }
+      case "power_swap_order": {
+        const b = statusBlock(s, "power_swap_order");
+        return { text: b ? (b.show ? "有订单展示" : "无进行中订单") : "暂无数据", tone: b?.show ? "blue" : "" };
+      }
+      case "frdg":
+      case "box":
+      case "lv_batt":
+      case "device":
+      case "charge_order":
+      case "remote_operate":
+      case "offcar_power_swap": {
+        const key =
+          {
+            frdg: "frdg_status",
+            box: "box_status",
+            lv_batt: "lv_batt_status",
+            device: "device_status",
+            charge_order: "charge_status_order",
+            remote_operate: "remote_operate_status",
+            offcar_power_swap: "offcar_power_swap_status",
+          }[id] ?? id;
+        const rows = autoRows(statusBlock(s, key));
+        return { text: rows.length ? `${rows.length} 项数据 · 点开查看` : "暂无数据", tone: "" };
+      }
+      default:
+        return { text: "", tone: "" };
+    }
+  };
+
+  if (look === "adjust") {
+    const visible = new Set(layout.order.filter((id) => !layout.hidden.includes(id)));
+    const bigIds = layout.order.filter((id) => visible.has(id) && BIG_CARDS[id]);
+    const sections = SMALL_SECTIONS.map((section) => ({
+      ...section,
+      items: layout.order
+        .filter((id) => visible.has(id) && section.ids.includes(id))
+        .map((id) => ({ id, ...smallSummary(id) })),
+    }));
+    const hotCount = (tab: BoardTab) =>
+      sections.filter((sec) => tab === "all" || sec.tab === tab).reduce((n, sec) => n + sec.items.filter((i) => i.tone === "hot").length, 0);
+    const total = bigIds.length + sections.reduce((n, sec) => n + sec.items.length, 0);
+    const shownBig = bigIds.filter((id) => boardTab === "all" || BIG_CARDS[id].tab === boardTab);
+    const shownSections = sections.filter((sec) => sec.items.length > 0 && (boardTab === "all" || sec.tab === boardTab));
+
+    return (
+      <div className="adjust-board">
+        <div className="adjust-toolbar">
+          {BOARD_TABS.map((tab) => {
+            const hot = tab.id === "all" ? 0 : hotCount(tab.id);
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`adjust-tab${boardTab === tab.id ? " active" : ""}`}
+                onClick={() => setBoardTab(tab.id)}
+              >
+                {tab.label}
+                {hot > 0 && <i>{hot}</i>}
+              </button>
+            );
+          })}
+          <span className="adjust-spacer" />
+          <span className="adjust-meta">
+            共 <b>{total}</b> 项{hotCount("all") > 0 && <> · <b className="adjust-hot-text">{hotCount("all")}</b> 项需注意</>}
+          </span>
+          {pollPills.map((pill) => (
+            <span key={pill} className="adjust-mini">
+              {pill}
+            </span>
+          ))}
+        </div>
+
+        {shownBig.length > 0 && (
+          <>
+            <p className="adjust-section">重点</p>
+            <div className="adjust-bigs">
+              {shownBig.map((id) => (
+                <div key={id} className={`adjust-big ${BIG_CARDS[id].tone}`} data-card={id}>
+                  {renderCard(id, NO_CONTROLS)}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {shownSections.map((sec) => (
+          <div key={sec.tab}>
+            <p className="adjust-section">{sec.title}</p>
+            <div className="adjust-smalls">
+              {sec.items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`adjust-small ${item.tone}`}
+                  onClick={() => setExpanded(item.id)}
+                  title="点开看详情"
+                >
+                  <span className="adjust-ic">{cardIcon(item.id)}</span>
+                  <span className="adjust-txt">
+                    <span className="adjust-t">{cardLabel(VEHICLE_CARDS, item.id)}</span>
+                    <span className="adjust-s">{item.text || "点开看详情"}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {expanded && (
+          <div className="adjust-overlay" role="dialog" aria-modal="true" onClick={() => setExpanded(null)}>
+            <div className="adjust-detail" onClick={(event) => event.stopPropagation()}>
+              <button type="button" className="adjust-close" onClick={() => setExpanded(null)} aria-label="关闭">
+                ×
+              </button>
+              {renderCard(expanded, NO_CONTROLS)}
+            </div>
+          </div>
+        )}
+        {rvsModal && <CardRvsModal title={rvsModal.title} payload={rvsModal.payload} onClose={() => setRvsModal(null)} />}
+        {certOpen && (
+          <CardRvsModal title="站点证书" kind="证书信息" payload={NIO_SITE_CERT} onClose={() => setCertOpen(false)} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <>

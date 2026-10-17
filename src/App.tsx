@@ -2,7 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import pkg from "../package.json";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
-import { VehicleHero } from "./components/VehicleHero";
+import { VehicleHero, type HeroAction } from "./components/VehicleHero";
+import type { SyncPanelId } from "./components/SyncControlBar";
 import { SwapHistory } from "./components/SwapHistory";
 import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
@@ -119,6 +120,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).get("setup") === "1",
   );
+  const [settingsPanel, setSettingsPanel] = useState<SyncPanelId>(null);
   const [vehiclePollSec, setVehiclePollSec] = useState(900);
   const [vehiclePollReasonLabel, setVehiclePollReasonLabel] = useState("白天");
   const [vehiclePollConfigured, setVehiclePollConfigured] = useState<VehiclePollIntervals>({
@@ -542,8 +544,92 @@ export default function App() {
   const posTs = s.position_status.sample_time || s.soc_status.sample_time;
   const currentWgs = mapCoordsFromGcj02(s.position_status.latitude, s.position_status.longitude);
 
+  const openSettings = (panel: SyncPanelId) => {
+    setSettingsPanel(panel);
+    setShowSettings(true);
+  };
+  const onHeroAction = (action: HeroAction) => {
+    if (action === "vehicle") void refresh("vehicle", true);
+    else if (action === "change") void refresh("change", true);
+    else if (action === "token") openSettings("quick");
+    else if (action === "log") openSettings("log");
+    else if (showSettings && settingsPanel === null) setShowSettings(false);
+    else openSettings(null);
+  };
+  const fetchProblems = [
+    warningVehicle,
+    vehicleMeta && !vehicleMeta.ok ? `车辆拉取失败：${vehicleMeta.error ?? "未知错误"}` : null,
+    changeMeta && !changeMeta.ok ? `换电拉取失败：${changeMeta.error ?? "未知错误"}` : null,
+  ].filter((x): x is string => Boolean(x));
+  const authProblem = [vehicleMeta, changeMeta].some(
+    (meta) => meta && !meta.ok && /sign|auth|token|登录|签名/i.test(`${meta.errorKind ?? ""} ${meta.error ?? ""}`),
+  );
+  const pollMin = (sec: number) => (sec % 3600 === 0 ? `${sec / 3600} 小时` : `${Math.round(sec / 60)} 分`);
+  const pollPills = [`车况 ${vehiclePollReasonLabel} ${pollMin(vehiclePollSec)}`, `换电 每 ${pollMin(changePollSec)}`];
+
   return (
     <div className="app">
+      {uiLook === "adjust" ? (
+        <header className="adjust-head">
+          <div className="adjust-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 16V11l2-5h10l2 5v5" />
+              <path d="M3 16h18v3H3z" />
+              <circle cx="7.5" cy="13" r="1" />
+              <circle cx="16.5" cy="13" r="1" />
+            </svg>
+          </div>
+          <div className="adjust-title">
+            <h1>
+              蔚来车辆看板 <span className="adjust-ver">v{pkg.version}</span>
+            </h1>
+            <p>
+              <span className="adjust-dot" />
+              <b>{s.soc_status.soc}%</b> · {s.soc_status.remaining_actual_range} km ·{" "}
+              {s.exterior_status.vehicle_state === 1 ? "行驶中" : s.soc_status.charge_state === 1 ? "充电中" : "已驻车"}
+              {vehicleMeta?.at ? ` · 车况 ${fmtTime(vehicleMeta.at)}` : ""}
+              {changeMeta?.at ? ` · 换电 ${fmtTime(changeMeta.at)}` : ""}
+            </p>
+          </div>
+          {fetchProblems.length > 0 && (
+            <button
+              type="button"
+              className="adjust-alert"
+              title={fetchProblems.join("\n")}
+              onClick={() => openSettings(authProblem ? "quick" : "log")}
+            >
+              <i />
+              {authProblem ? "接口签名或登录失效 · 点此更新 Token" : `${fetchProblems[0]} · 查看日志`}
+            </button>
+          )}
+          <button
+            type="button"
+            className="adjust-icon-btn"
+            title="数据同步"
+            aria-label="数据同步"
+            onClick={() => onHeroAction("settings")}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+              <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+              <circle cx="16" cy="7" r="2" />
+              <circle cx="10" cy="17" r="2" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="adjust-icon-btn primary"
+            title="刷新车辆和换电"
+            aria-label="刷新车辆和换电"
+            disabled={loading}
+            onClick={() => void refresh("all", true)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={loading ? "spin" : undefined}>
+              <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+              <path d="M20 4v5h-5" />
+            </svg>
+          </button>
+        </header>
+      ) : (
       <header className="topbar">
         <div>
           <h1>蔚来车辆看板</h1>
@@ -595,9 +681,12 @@ export default function App() {
           </div>
         </div>
       </header>
+      )}
 
       {showSettings && (
         <ApiSettings
+          key={settingsPanel ?? "none"}
+          initialPanel={settingsPanel}
           lastSyncVehicle={lastSyncVehicle}
           lastSyncChange={lastSyncChange}
           lastSyncCheckin={lastSyncCheckin}
@@ -632,7 +721,15 @@ export default function App() {
         />
       )}
 
-      {uiLook === "new" && <VehicleHero status={s} power={powerData} />}
+      {uiLook !== "classic" && (
+        <VehicleHero
+          status={s}
+          power={powerData}
+          variant={uiLook === "adjust" ? "adjust" : "new"}
+          busy={loadingTarget}
+          onAction={onHeroAction}
+        />
+      )}
 
       <DashboardCards
         data={data!}
@@ -644,6 +741,8 @@ export default function App() {
         stockWatchLoading={stockWatchLoading}
         onRefreshStockWatch={(targetId) => void refreshStockWatch(true, targetId)}
         power={powerData}
+        look={uiLook}
+        pollPills={pollPills}
       />
 
       <Suspense fallback={<section className="panel muted">地图加载中…</section>}>

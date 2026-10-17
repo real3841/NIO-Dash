@@ -11,6 +11,14 @@ import { SyncRuntimeLogPanel } from "./SyncRuntimeLogPanel";
 import type { StockWatchState } from "../lib/stock-watch";
 import { TrayDisplaySettings, trayDisplayMeta } from "./TrayDisplaySettings";
 import { applyUiLook, readUiLook, type UiLook } from "../lib/ui-look";
+import {
+  PHOTO_ANGLES,
+  deleteVehiclePhoto,
+  photoUrl,
+  uploadVehiclePhoto,
+  useVehiclePhotos,
+  type PhotoAngle,
+} from "../lib/vehicle-photos";
 
 export type SyncPanelId =
   | "files"
@@ -236,12 +244,15 @@ function LookSettings() {
   };
   return (
     <div className="sync-hub-panel-body">
-      <p className="muted">老界面是原来的浅色卡片。新界面跟随系统深浅色，并在顶部显示车况示意图。</p>
+      <p className="muted">
+        老界面是原来的浅色卡片。新界面跟随系统深浅色，并在顶部显示车况示意图。调整界面把卡片分成重点大卡片和一行小卡片，按标签筛选，异常的会亮起来；点小卡片看完整内容。
+      </p>
       <div className="look-options" role="radiogroup" aria-label="界面">
         {(
           [
             ["classic", "老界面"],
             ["new", "新界面"],
+            ["adjust", "调整界面"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -256,6 +267,74 @@ function LookSettings() {
           </button>
         ))}
       </div>
+      {look === "adjust" && <VehiclePhotoSettings />}
+    </div>
+  );
+}
+
+function VehiclePhotoSettings() {
+  const photos = useVehiclePhotos();
+  const [busy, setBusy] = useState<PhotoAngle | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (angle: PhotoAngle, job: () => Promise<unknown>) => {
+    setBusy(angle);
+    setError(null);
+    try {
+      await job();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="photo-settings">
+      <p className="photo-settings-title">车辆照片</p>
+      <p className="muted">
+        选本机的车辆图片，白底会自动去掉，顶部可以切换角度。照片只存在本机数据目录，不会打进安装包，也不会上传。没选的话用画的车。
+      </p>
+      <div className="photo-slots">
+        {PHOTO_ANGLES.map((angle) => {
+          const version = photos?.[angle.id] ?? null;
+          return (
+            <div key={angle.id} className={`photo-slot${version ? " has" : ""}`}>
+              <div className="photo-slot-thumb">
+                {version ? <img src={photoUrl(angle.id, version)} alt={angle.label} /> : <span>未选择</span>}
+              </div>
+              <span className="photo-slot-label">{angle.label}</span>
+              <div className="photo-slot-actions">
+                <label className="btn ghost">
+                  {busy === angle.id ? "…" : version ? "更换" : "选择"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    hidden
+                    disabled={busy !== null}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      if (file) void run(angle.id, () => uploadVehiclePhoto(angle.id, file));
+                    }}
+                  />
+                </label>
+                {version && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy !== null}
+                    onClick={() => void run(angle.id, () => deleteVehiclePhoto(angle.id))}
+                  >
+                    移除
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="nas-error">{error}</p>}
     </div>
   );
 }

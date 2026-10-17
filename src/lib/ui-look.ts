@@ -1,10 +1,11 @@
-export type UiLook = "classic" | "new";
+export type UiLook = "classic" | "new" | "adjust";
 
 const KEY = "nio_ui_look";
 
 export function readUiLook(): UiLook {
   try {
-    return localStorage.getItem(KEY) === "classic" ? "classic" : "new";
+    const saved = localStorage.getItem(KEY);
+    return saved === "classic" || saved === "adjust" ? saved : "new";
   } catch {
     return "new";
   }
@@ -12,6 +13,7 @@ export function readUiLook(): UiLook {
 
 export function applyUiLook(look: UiLook): void {
   document.documentElement.classList.toggle("look-classic", look === "classic");
+  document.documentElement.classList.toggle("look-adjust", look === "adjust");
   try {
     localStorage.setItem(KEY, look);
   } catch {

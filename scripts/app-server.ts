@@ -21,6 +21,7 @@ import { amapReverseGeocode, isAmapGeocodeConfigured } from "./amap-geocode.js";
 import { getStorageFilesSnapshot } from "./storage-files.js";
 import { handleStockWatchRequest, setStockWatchSchedulerHooks } from "./stock-watch-api.js";
 import { startStockWatchScheduler } from "./stock-watch.js";
+import { handleVehiclePhotoRequest } from "./vehicle-photos.js";
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -145,6 +146,10 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       }
 
       if (await handleStockWatchRequest(req, res, pathname, method)) {
+        return;
+      }
+
+      if (await handleVehiclePhotoRequest(req, res, pathname, method, opts.dataDir)) {
         return;
       }
 

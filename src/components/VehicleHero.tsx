@@ -1,15 +1,67 @@
-import { useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { chargeStateLabel, fmtTime, vehicleStateLabel, type VehicleResponse } from "../lib/vehicle";
 import { formatChargingPowerKw, onOff, windowPosLabel } from "../lib/vehicle-display";
 import { formatDurationSec, workStateLabel, type PowerFile } from "../lib/power";
 import { localDayKey } from "../lib/date-utils";
+import {
+  PHOTO_ANGLES,
+  PHOTO_SPOTS,
+  cutoutWhiteBackground,
+  photoUrl,
+  useVehiclePhotos,
+  type PhotoAngle,
+} from "../lib/vehicle-photos";
+import { angleAfterHorizontalDrag, orderedPhotoAngles } from "../lib/photo-angle-drag";
 
 type Status = VehicleResponse["data"]["status"];
+
+export type HeroAction = "vehicle" | "change" | "token" | "log" | "settings";
 
 interface Props {
   status: Status;
   power?: PowerFile | null;
+  variant?: "new" | "adjust";
+  busy?: "vehicle" | "change" | "all" | null;
+  onAction?: (action: HeroAction) => void;
 }
+
+const HERO_ACTIONS: Array<{ id: HeroAction; label: string; icon: ReactNode }> = [
+  {
+    id: "vehicle",
+    label: "刷新车辆",
+    icon: <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" />,
+  },
+  { id: "change", label: "刷新换电", icon: <path d="M4 7h13l-3-3M20 17H7l3 3" /> },
+  {
+    id: "token",
+    label: "更新 Token",
+    icon: (
+      <>
+        <circle cx="8" cy="15" r="4" />
+        <path d="M11 12l9-9M17 6l3 3" />
+      </>
+    ),
+  },
+  { id: "log", label: "运行日志", icon: <path d="M5 5h14M5 10h14M5 15h9M5 20h6" /> },
+  {
+    id: "settings",
+    label: "数据同步",
+    icon: (
+      <>
+        <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+        <circle cx="16" cy="7" r="2" />
+        <circle cx="10" cy="17" r="2" />
+      </>
+    ),
+  },
+];
 
 interface Spot {
   id: string;
@@ -49,8 +101,74 @@ function tyreTone(press: number | null, temp: number | null): Spot["tone"] {
   return "ok";
 }
 
-export function VehicleHero({ status: s, power }: Props) {
+export function VehicleHero({ status: s, power, variant = "new", busy = null, onAction }: Props) {
   const [active, setActive] = useState<string | null>(null);
+  const adjust = variant === "adjust";
+  const photos = useVehiclePhotos();
+  const photoAngles = adjust ? PHOTO_ANGLES.filter((a) => photos?.[a.id]) : [];
+  const dragAngles = orderedPhotoAngles(photoAngles.map((item) => item.id));
+  const [angle, setAngle] = useState<PhotoAngle>("side");
+  const [dragging, setDragging] = useState(false);
+  const dragStart = useRef<{ pointerId: number; x: number; angle: PhotoAngle } | null>(null);
+  const dragged = useRef(false);
+  const shownAngle = photoAngles.some((a) => a.id === angle) ? angle : photoAngles[0]?.id;
+  const shownVersion = shownAngle ? photos?.[shownAngle] ?? null : null;
+  const [cutout, setCutout] = useState<{ key: string; src: string } | null>(null);
+  const cutoutKey = shownAngle && shownVersion ? `${shownAngle}:${shownVersion}` : null;
+
+  useEffect(() => {
+    if (!shownAngle || !shownVersion || !cutoutKey) return;
+    let alive = true;
+    cutoutWhiteBackground(photoUrl(shownAngle, shownVersion))
+      .then((src) => alive && setCutout({ key: cutoutKey, src }))
+      .catch(() => alive && setCutout(null));
+    return () => {
+      alive = false;
+    };
+  }, [shownAngle, shownVersion, cutoutKey]);
+
+  const photoSrc = cutout && cutout.key === cutoutKey ? cutout.src : null;
+  const photoSpots = shownAngle ? PHOTO_SPOTS[shownAngle] : null;
+
+  const chooseAngle = (next: PhotoAngle) => {
+    setAngle(next);
+    setActive(null);
+  };
+
+  const onPhotoPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!shownAngle || dragAngles.length < 2 || (event.pointerType === "mouse" && event.button !== 0)) return;
+    dragStart.current = { pointerId: event.pointerId, x: event.clientX, angle: shownAngle };
+    dragged.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+  };
+
+  const onPhotoPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragStart.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const next = angleAfterHorizontalDrag(dragAngles, start.angle, event.clientX - start.x);
+    if (next !== start.angle) dragged.current = true;
+    if (next !== shownAngle) chooseAngle(next);
+  };
+
+  const finishPhotoDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragStart.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragStart.current = null;
+    setDragging(false);
+  };
+
+  const onPhotoKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || !shownAngle || dragAngles.length < 2) return;
+    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    const index = dragAngles.indexOf(shownAngle);
+    const next = dragAngles[Math.max(0, Math.min(dragAngles.length - 1, index + direction))];
+    if (next) chooseAngle(next);
+  };
 
   const soc = s.soc_status.soc;
   const socExtra = s.soc_status as unknown as Record<string, number>;
@@ -220,6 +338,38 @@ export function VehicleHero({ status: s, power }: Props) {
     } as const;
   };
 
+  const doorsAllClosed = spots
+    .filter((spot) => spot.id.startsWith("door_") || spot.id === "hood" || spot.id === "tail")
+    .every((spot) => spot.tone !== "warn");
+  const windowsAllClosed = ["win_front_left_posn", "win_front_right_posn", "win_rear_left_posn", "win_rear_right_posn"].every(
+    (key) => (win[key] ?? 0) <= 0,
+  );
+  const tyreWarn = spots.some((spot) => spot.id.startsWith("tyre_") && spot.tone === "warn");
+  const summary = [
+    doorsAllClosed && windowsAllClosed ? "车门车窗全关" : doorsAllClosed ? "车窗未关" : "车门未关",
+    tyreWarn ? "胎压需注意" : "胎压正常",
+    spot
+      ? `家充桩${power?.realtime?.effective_state_desc ?? (spot.is_online ? "在线" : "离线")}${
+          spot.reservation_state && spot.reservation_starttime ? `（预约 ${spot.reservation_starttime.slice(0, 5)}）` : ""
+        }`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const usePhoto = Boolean(photoSrc && photoSpots);
+  const hasSelectedPhoto = Boolean(shownAngle && shownVersion && photoSpots);
+  const tipAnchor = (() => {
+    if (!current || current.place === "corner") return null;
+    if (usePhoto) {
+      const pos = photoSpots?.[current.id];
+      if (!pos) return null;
+      return { left: pos[0], top: pos[1] };
+    }
+    const point = upright(current.x, current.y);
+    return { left: ((point.x - VB_X) / VB_W) * 100, top: ((point.y - VB_Y) / VB_H) * 100 };
+  })();
+
   const tyreRect = (id: string, x: number, y: number) => (
     <g {...bind(id)}>
       <rect className="hero-tyre" x={x} y={y} width={58} height={20} rx={7} />
@@ -227,7 +377,7 @@ export function VehicleHero({ status: s, power }: Props) {
   );
 
   return (
-    <section className="vehicle-hero">
+    <section className={`vehicle-hero${adjust ? " vehicle-hero-adjust" : ""}`}>
       <div className="vehicle-hero-stats">
         <div className="vehicle-hero-soc">
           <span className="vehicle-hero-soc-num">{soc}</span>
@@ -263,6 +413,54 @@ export function VehicleHero({ status: s, power }: Props) {
       </div>
 
       <div className="vehicle-hero-stage">
+        {photoAngles.length > 1 && (
+          <div className="hero-angles" role="tablist" aria-label="照片角度">
+            {photoAngles.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="tab"
+                aria-selected={a.id === shownAngle}
+                className={a.id === shownAngle ? "active" : ""}
+                onClick={() => chooseAngle(a.id)}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div
+          className={`hero-canvas${hasSelectedPhoto ? " photo" : ""}${dragging ? " dragging" : ""}`}
+          role={hasSelectedPhoto && dragAngles.length > 1 ? "group" : undefined}
+          aria-label={hasSelectedPhoto && dragAngles.length > 1 ? "车辆照片，可左右拖动或使用方向键切换角度" : undefined}
+          tabIndex={hasSelectedPhoto && dragAngles.length > 1 ? 0 : undefined}
+          onPointerDown={hasSelectedPhoto ? onPhotoPointerDown : undefined}
+          onPointerMove={hasSelectedPhoto ? onPhotoPointerMove : undefined}
+          onPointerUp={hasSelectedPhoto ? finishPhotoDrag : undefined}
+          onPointerCancel={hasSelectedPhoto ? finishPhotoDrag : undefined}
+          onKeyDown={hasSelectedPhoto ? onPhotoKeyDown : undefined}
+          onClickCapture={
+            hasSelectedPhoto
+              ? (event) => {
+                  if (!dragged.current) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  dragged.current = false;
+                }
+              : undefined
+          }
+        >
+        {usePhoto ? (
+          <div className="hero-photo">
+            <img src={photoSrc!} alt="车辆照片" draggable={false} />
+            {Object.entries(photoSpots!).map(([id, [x, y]]) =>
+              byId.has(id) ? (
+                <span key={id} {...bind(id)} className={`${bind(id).className} hero-dot`} style={{ left: `${x}%`, top: `${y}%` }} />
+              ) : null,
+            )}
+            {dragAngles.length > 1 && <span className="hero-drag-hint">左右拖动切换角度</span>}
+          </div>
+        ) : (
         <svg viewBox={`${VB_X} ${VB_Y} ${VB_W} ${VB_H}`} className="vehicle-hero-svg" aria-label="车况示意图">
           <defs>
             <linearGradient id="hero-body" x1="0" y1="0" x2="0" y2="1">
@@ -364,24 +562,16 @@ export function VehicleHero({ status: s, power }: Props) {
           </g>
           </g>
         </svg>
+        )}
 
-        {current && (
+        {current && (current.place === "corner" || tipAnchor) && (
           <div
             className={`hero-tip ${
-              current.place === "corner"
+              !tipAnchor
                 ? "corner"
-                : `${upright(current.x, current.y).y > VB_Y + VB_H / 2 ? "above" : "below"}${
-                    upright(current.x, current.y).x > VB_X + VB_W * 0.7 ? " end" : ""
-                  }`
+                : `${tipAnchor.top > 50 ? "above" : "below"}${tipAnchor.left > 70 ? " end" : ""}`
             }`}
-            style={(() => {
-              if (current.place === "corner") return undefined;
-              const point = upright(current.x, current.y);
-              return {
-                left: `${((point.x - VB_X) / VB_W) * 100}%`,
-                top: `${((point.y - VB_Y) / VB_H) * 100}%`,
-              };
-            })()}
+            style={tipAnchor ? { left: `${tipAnchor.left}%`, top: `${tipAnchor.top}%` } : undefined}
             role="status"
           >
             <p className="hero-tip-title">{current.title}</p>
@@ -390,6 +580,26 @@ export function VehicleHero({ status: s, power }: Props) {
                 <span>{label}</span>
                 <span>{value}</span>
               </div>
+            ))}
+          </div>
+        )}
+        </div>
+        {adjust && <div className="hero-summary">{summary}</div>}
+        {adjust && onAction && (
+          <div className="hero-actions">
+            {HERO_ACTIONS.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className={`hero-action${action.id === "vehicle" ? " primary" : ""}`}
+                disabled={(action.id === "vehicle" || action.id === "change") && busy !== null}
+                onClick={() => onAction(action.id)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+                  {action.icon}
+                </svg>
+                {busy === action.id ? "…" : action.label}
+              </button>
             ))}
           </div>
         )}

@@ -1,25 +1,37 @@
-# NIO-Dash
+<h1 align="center">NIO-Dash</h1>
 
-蔚来车辆看板 — macOS 菜单栏应用。自动拉取车辆 RVS 状态、服务订单与每日签到，在本地展示电量、续航、换电记录与行驶路径。
+<p align="center">
+  蔚来车辆看板 — 常驻 macOS 菜单栏，在一个本地应用里查看车况、电量、行程、家充与换电记录。
+</p>
 
-![Platform](https://img.shields.io/badge/platform-macOS-blue)
-![Version](https://img.shields.io/badge/version-1.9.9-green)
-![Electron](https://img.shields.io/badge/Electron-35-47848F)
-![React](https://img.shields.io/badge/React-19-61DAFB)
+<p align="center">
+  <a href="https://github.com/real3841/NIO-Dash/releases/latest"><b>下载最新版</b></a>
+  &nbsp;·&nbsp;
+  <a href="#功能概览"><b>功能概览</b></a>
+  &nbsp;·&nbsp;
+  <a href="#开发运行"><b>自行构建</b></a>
+</p>
 
-![车况示意图](docs/vehicle-hero.png)
+<p align="center">
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.10.0-16a34a">
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-35-47848F">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB">
+</p>
+
+<p align="center">
+  <img src="docs/vehicle-hero.png" alt="蔚来车辆看板车况示意图">
+</p>
 
 ## 功能概览
 
-| 模块 | 说明 |
-|------|------|
-| **菜单栏** | 常驻显示电量 / 续航等，可自定义字段 |
-| **车辆看板** | 可拖拽、可隐藏的卡片，覆盖车况、家充桩、当日里程与卡券库存 |
-| **服务订单** | 换电、维保等历史；按游标翻到最后一页后写入本地账本 |
-| **每日签到** | 独立 API，每天 9:00 拉取一次 |
-| **行驶路径** | 按天汇总 GPS 采样，并合并最近行程的起终点 |
-| **历史趋势** | 一排四张：电量、日增里程、总里程、家充。日期范围、缩放与平移同一套操作 |
-| **运行日志** | 数据同步面板查看拉取记录、API 请求、完整响应与失败原因 |
+- **常驻菜单栏。** 快速查看电量、续航和车辆状态，显示字段可自行配置。
+- **完整车辆看板。** 卡片支持拖拽、隐藏与恢复，覆盖车门、车窗、轮胎、空调、灯光和软件状态。
+- **行程与趋势。** 按天整理行驶路径、日增里程、电量、总里程与家充趋势。
+- **家充与服务订单。** 展示家充桩状态、月度充电统计，并在本地持续补全换电与服务订单。
+- **自动同步。** 根据行驶、驻车和昼夜状态使用不同拉取间隔，每日签到独立调度。
+- **问题可追踪。** 运行日志区分签名、Token 与网络错误，并提供对应处理入口。
+- **数据留在本机。** 配置与历史记录保存在本机数据目录，不随安装包上传。
 
 ### 车辆看板卡片
 
@@ -39,11 +51,20 @@
 | **换电** | 独立定时，默认 1 天，可选 12 小时或 6 小时；也可手动刷新。查询会按游标翻到最后一页 |
 | **签到** | 每天 **9:00** 一次；9 点后首次打开补拉；未签到时每 5 分钟重试直至已签 |
 
+## 下载
+
+从 [GitHub Releases](https://github.com/real3841/NIO-Dash/releases/latest) 下载最新的
+`NIO-Dash-<版本>-arm64-mac.zip`，解压后打开 **蔚来车辆看板.app**。
+
+当前预编译版本面向 **Apple Silicon**。Intel Mac 可按下方步骤从源码构建。
+
+> 首次打开若被 Gatekeeper 拦截：在应用上右键选择 **打开**，再确认一次。
+
 ## 快速开始
 
 ### 环境要求
 
-- macOS（Apple Silicon 或 Intel）
+- macOS（源码构建支持 Apple Silicon 或 Intel）
 - Node.js 20+
 - npm
 
@@ -236,6 +257,14 @@ GET https://icar.nio.com/api/2/rvs/vehicle/<vehicle_id>/status?...
 | `npm run serve:api` | 仅 API 服务 |
 
 ## 更新日志
+
+### v1.10.0
+
+- **调整界面**：新增跟随系统深浅色的第三套主界面，重点信息、分类状态与同步入口集中展示
+- **本机车辆照片**：可为五个角度选择本机图片；照片仅保存在本机数据目录，不进入安装包或仓库
+- **拖动切换角度**：车辆照片支持左右拖动和方向键切换，缺少的角度会自动跳过
+- **可靠性**：超大图片上传返回明确错误，抠图缓存限制为五项并自动清理失败项
+- **README**：重新整理下载入口、产品简介与功能概览
 
 ### v1.9.9
 
